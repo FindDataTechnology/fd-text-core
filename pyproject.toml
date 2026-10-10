@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fd-text-core"
+version = "0.1.0"
+description = "通用文本处理引擎：摄取/结构化/索引/查询一体化底座，垂域以配置接入。纯基础设施，无产品面。"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{ name = "FindDataTechnology" }]
+dependencies = [
+    "fastmcp>=2.0",
+    "click",
+    "uvicorn",
+    "httpx",
+    "psycopg[binary,pool]>=3.1",
+    "alembic>=1.13",
+    "boto3",
+    "zstandard",
+    "pyyaml",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-asyncio", "ruff"]
+
+[project.scripts]
+fd-text-core = "fd_text_core.cli:cli"
+fd-text-gate = "scripts.conformance_gate:cli"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.setuptools.packages.find]
+include = ["fd_text_core*"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
