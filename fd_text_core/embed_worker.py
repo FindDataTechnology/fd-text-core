@@ -76,6 +76,7 @@ class WorkerResult:
     embedded: int = 0
     chunks: int = 0
     failed: int = 0
+    reclaimed: int = 0  # 本次开工回收的陈旧 claim 数
 
 
 def ensure_chunks(doc_row: dict, text: str) -> int:
@@ -115,6 +116,20 @@ def _tsv_config(domain: str) -> str:
     return os.environ.get("FDTEXT_TSV_CONFIG", "simple")
 
 
+def reclaim_stale(stale_after: str = "5 minutes") -> int:
+    """回收陈旧 claim：worker 崩溃/被杀会把任务留在 claimed 态，
+
+    而 claim_batch 只挑 pending，于是这批任务会永久悬空（规模冒烟中实测
+    撞到：脚本达上限退出后 74 条任务卡 claimed，对应 73 篇文档有正文却无切块）。
+    开工前先回收，保证「中断后续跑」的等价性承诺成立。
+    """
+    return execute(
+        "UPDATE embed_tasks SET state='pending', claimed_at=NULL "
+        "WHERE state='claimed' AND claimed_at < now() - %s::interval",
+        (stale_after,),
+    )
+
+
 def claim_batch(limit: int = 50) -> list[dict]:
     rows = fetch_all(
         """
@@ -134,6 +149,7 @@ def run_once(embedder: Embedder, model: str, limit: int = 50) -> WorkerResult:
     """跑一批。开工前必过自检门。"""
     sim = run_self_check(embedder, model)
     res = WorkerResult()
+    res.reclaimed = reclaim_stale()
     tasks = claim_batch(limit)
     res.claimed = len(tasks)
     for t in tasks:
