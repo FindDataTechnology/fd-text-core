@@ -96,3 +96,39 @@ def test_screenplay_chunks_satisfy_lossless_invariant():
 def test_unknown_text_still_parses_as_single_scene():
     p = parse_play("随便一段没有剧本结构的文字。\n第二行。")
     assert len(p.section_texts()) == 1
+
+
+# 真实语料形态（维基文库《竇娥冤》）：`== 楔子 ==` 标题式章节 + 〔〕【】括号族
+REAL_CN = """== 楔子 ==
+〔卜兒蔡婆上，詩云〕花有重開日，人無再少年。
+〔沖末扮竇天章引正旦扮端雲上〕
+== 第一折 ==
+〔淨扮賽盧醫上，云〕
+行醫有斟酌，下藥依本草。
+【寄生草】你道他匆匆喜，我替你倒細細愁。
+〔張驢兒云〕大人詳情。
+"""
+
+
+def test_real_world_wiki_headings_and_brackets():
+    p = parse_play(REAL_CN)
+    paths = [h for h, _ in p.section_texts()]
+    # 楔子 与 第一折 都要被识别为独立场景
+    assert any("楔子" in x for x in paths), paths
+    assert any("第一折" in x for x in paths), paths
+
+
+def test_real_world_roles_stripped():
+    p = parse_play(REAL_CN)
+    # 说话人应剥离「上/云/詩云」等动作字
+    for c in p.characters:
+        assert not c.endswith("上"), c
+        assert "詩" not in c[-1:], c
+    assert any("賽盧醫" in c for c in p.characters), p.characters
+    assert any("張驢兒" in c for c in p.characters), p.characters
+
+
+def test_lyric_lines_not_treated_as_speakers():
+    """【曲牌】开头的唱词不应被当成说话人。"""
+    p = parse_play(REAL_CN)
+    assert not any(c.startswith("【") for c in p.characters), p.characters

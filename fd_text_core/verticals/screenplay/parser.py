@@ -16,15 +16,16 @@ from dataclasses import dataclass, field
 # 场景/幕/场/折/出：中英并列
 _RE_ACT_WEST = re.compile(r"^\s*(ACT|SCENE)\s+([IVXLC0-9]+|[A-Z0-9]+)\b[.:]?\s*(.*)$", re.I)
 _RE_SCENE_WEST = re.compile(r"^\s*(INT\.|EXT\.|INT\b|EXT\b)\s*[.:-]?\s*(.*)$", re.I)
-_RE_ACT_CN = re.compile(r"^\s*第\s*([一二三四五六七八九十百零〇\d]+)\s*(折|出|幕|本|齣)\s*(.*)$")
-_RE_SCENE_CN = re.compile(r"^\s*(楔子|序幕|尾声|第\s*[一二三四五六七八九十百零〇\d]+\s*场)\s*(.*)$")
+_RE_ACT_CN = re.compile(r"^\s*(?:={1,4}\s*)?第\s*([一二三四五六七八九十百零〇\d]+)\s*(折|出|幕|本|齣)\s*(?:={1,4})?\s*(.*)$")
+_RE_SCENE_CN_HEAD = re.compile(r"^\s*(?:={1,4}\s*)?(楔子|序幕|尾声)\s*(?:={1,4})?\s*(.*)$")
+_RE_SCENE_CN = re.compile(r"^\s*(?:={1,4}\s*)?(楔子|序幕|尾声|第\s*[一二三四五六七八九十百零〇\d]+\s*(?:折|出|幕|场|齣))\s*(?:={1,4})?\s*(.*)$")
 
 # 说话人：现代 `名字:` / `名字：`；古典 `（末云）`、`（旦唱）` 或行首 `末云：`
 _RE_SPEAKER_MODERN = re.compile(r"^\s*([^\s:：]{1,20})\s*[:：]\s*(.*)$")
-_RE_SPEAKER_CN = re.compile(r"^[（(]\s*([^）)]{1,12}?)\s*(云|唱|白|念|科)\s*[）)]\s*(.*)$")
+_RE_SPEAKER_CN = re.compile(r"^[（(〔【]\s*([^）)〕】]{1,12}?)\s*(云|唱|白|念|科|詩云|白云)\s*[）)〕】]\s*(.*)$")
 _RE_SPEAKER_CN_BARE = re.compile(r"^\s*([^\s:：]{1,8})\s*(云|唱|白)\s*[:：]\s*(.*)$")
 # 古典登场括注里的角色名需剥离「上/云/唱」等动作字（否则说话人变成「窦娥上，云」）
-_RE_ROLE_TAIL = re.compile(r"[云唱白科上下，,。]+$")
+_RE_ROLE_TAIL = re.compile(r"(?:雲|云|唱|白|科|上|下|詩|念|做[^，,]{0,6})[，,、。]*$")
 
 
 def _strip_role_tail(name: str) -> str:
@@ -35,8 +36,8 @@ def _strip_role_tail(name: str) -> str:
         name = _RE_ROLE_TAIL.sub("", name).strip()
     return name
 
-_RE_STAGE = re.compile(r"[（(]([^）)]*)[）)]")  # 括号=舞台提示
-_RE_ROLE_CN = re.compile(r"[（(]\s*([^）)]{0,10}?)\s*扮\s*([^）)]{1,12}?)\s*[）)]")  # （旦扮窦娥上）
+_RE_STAGE = re.compile(r"[（(〔【]([^）)〕】]*)[）)〕】]")  # 括号=舞台提示（含〔〕【】）
+_RE_ROLE_CN = re.compile(r"[（(〔【]\s*([^）)〕】]{0,10}?)\s*扮\s*([^）)〕】]{1,12}?)\s*[）)〕】]")  # （旦扮窦娥上）
 
 
 @dataclass
@@ -112,7 +113,16 @@ def parse_play(text: str) -> ParsedPlay:
 
     lines = text.splitlines()
     first = _clean(lines[0]) if lines else ""
-    if first and len(first) < 120:
+    # 首行作标题，但不得吞掉标题式章节行（如 `== 楔子 ==`）——
+    # 否则第一个场景会丢失（实测《竇娥冤》首行正是楔子标题）。
+    heading_like = bool(
+        _RE_ACT_WEST.match(first)
+        or _RE_ACT_CN.match(first)
+        or _RE_SCENE_CN_HEAD.match(first)
+        or _RE_SCENE_WEST.match(first)
+        or _RE_SCENE_CN.match(first)
+    )
+    if first and len(first) < 120 and not heading_like:
         play.title = first
         lines = lines[1:]
 
@@ -142,6 +152,15 @@ def parse_play(text: str) -> ParsedPlay:
             cur = Scene(act=cur_act, name="scene")
             scenes.append(cur)
             rest = _clean(m.group(3))
+            if rest:
+                cur.lines.append(Line(text=rest, kind="heading"))
+            continue
+
+        m = _RE_SCENE_CN_HEAD.match(line)
+        if m:
+            cur = Scene(act=cur_act, name=m.group(1))
+            scenes.append(cur)
+            rest = _clean(m.group(2))
             if rest:
                 cur.lines.append(Line(text=rest, kind="heading"))
             continue
@@ -186,6 +205,14 @@ def parse_play(text: str) -> ParsedPlay:
             pending_stage = []
             continue
 
+        # 【曲牌】开头的行是唱词而非说话人，不参与说话人识别
+        stripped = line.strip()
+        if stripped.startswith("【"):
+            cleaned, stages = _strip_stage(line)
+            if cleaned:
+                cur.lines.append(Line(text=cleaned, kind="action", stage=stages))
+            continue
+
         m = _RE_SPEAKER_MODERN.match(line)
         if m and m.group(2).strip():
             cleaned, stages = _strip_stage(m.group(2))
@@ -194,9 +221,8 @@ def parse_play(text: str) -> ParsedPlay:
             continue
 
         # 纯括号行 = 舞台提示，挂到下一句而非单独成行
-        stripped = line.strip()
-        if stripped.startswith(("(", "（")) and stripped.endswith((")", "）")):
-            pending_stage.append(stripped.strip("()（）").strip())
+        if stripped[:1] in "(（〔【" and stripped[-1:] in ")）〕】":
+            pending_stage.append(stripped.strip("()（）〔〕【】").strip())
             continue
 
         cleaned, stages = _strip_stage(line)
