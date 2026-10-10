@@ -35,15 +35,16 @@ spec:
             limits:
               cpu: "1"
               memory: 1Gi
+          # MCP 端点只接受 POST/GET+升级头的流请求，裸 GET 返回 400。
+          # 探针因此不能用 httpGet /mcp（否则被判失败并反复重启，实测撞过），
+          # 改用 TCP 探活：能建连即视为在侦听。
           readinessProbe:
-            httpGet:
-              path: /mcp
+            tcpSocket:
               port: 8000
-            initialDelaySeconds: 20
+            initialDelaySeconds: 15
             periodSeconds: 10
           livenessProbe:
-            httpGet:
-              path: /mcp
+            tcpSocket:
               port: 8000
             initialDelaySeconds: 40
             periodSeconds: 20
