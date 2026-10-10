@@ -31,6 +31,15 @@ def register(v: Vertical) -> None:
     _REGISTRY[v.name] = v
 
 
+def replace(v: Vertical) -> None:
+    """垂域模块以自身权威配置覆盖 bootstrap 默认项。
+
+    bootstrap 只为「无垂域目录也能跑」提供兜底；一旦垂域模块存在，
+    其配置应当胜出（register 拒绝重复注册是为了防 silent 覆盖）。
+    """
+    _REGISTRY[v.name] = v
+
+
 def get(name: str) -> Vertical:
     if name not in _REGISTRY:
         raise KeyError(f"未注册垂域: {name}；已注册={sorted(_REGISTRY)}")

@@ -79,6 +79,35 @@ def _register(domain: str) -> None:
             return _err("UPSTREAM_UNAVAILABLE", f"PG 不可达：{exc}")
         return _ok({"results": res["results"], "count": res["count"], "degraded": res["degraded"]})
 
+    @mcp.tool(
+        name=f"{domain}_federated",
+        description=f"{domain} 垂域：外部开放检索编排（arXiv/OpenAlex/Semantic Scholar，非本地语料）",
+    )
+    def federated(query: str, limit: int = 10) -> dict:
+        """外部联邦检索。仅元数据与摘要，绝不返回全文成品（版权红线）。"""
+        try:
+            from importlib import import_module
+
+            federated_search = import_module(
+                f"fd_text_core.verticals.{domain}.connectors"
+            ).federated_search
+        except (ImportError, AttributeError):
+            return _err("NOT_SUPPORTED", f"垂域 {domain} 未提供外部 connector")
+        import os
+
+        res = federated_search(
+            query, limit,
+            openalex_mailto=os.environ.get("OPENALEX_MAILTO", ""),
+            openalex_key=os.environ.get("OPENALEX_API_KEY", ""),
+            s2_key=os.environ.get("S2_API_KEY", ""),
+        )
+        return _ok({
+            "hits": res.hits,
+            "count": len(res.hits),
+            "degraded": res.degraded,
+            "note": "全文请循 hits[].url 至原始出版方获取；本服务不分发全文",
+        })
+
     @mcp.tool(name=f"{domain}_read", description=f"{domain} 垂域：按 doc_id 偏移读取切块")
     def read(doc_id: int, offset: int = 0, limit: int = 4000) -> dict:
         try:
