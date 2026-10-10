@@ -19,6 +19,8 @@ SUPERSEDED = "superseded"  # 中性退役词：绝不用垂域私有词汇（如
 
 VALID_ORIGINS = ("crawl", "upload")  # upload 为将来自动取通道预留，本期无对外端点
 
+COLD_STORE_MIN_CHARS = 200_000  # 超过此长度的正文自动落 zstd 冷存，PG 只留指针
+
 
 @dataclass
 class Doc:
@@ -78,6 +80,12 @@ def load_documents(docs: Iterable[Doc], batch_key: str | None = None) -> dict:
             stats["superseded"] += 1
 
         prov = Provenance.now(d.source, d.source_id).to_dict()
+        # 大正文自动落冷存（PQ 不存正文，只留指针）；小文可作为 metadata 摘录。
+        block_key = d.cold_block_key
+        if block_key is None and len(d.content) >= COLD_STORE_MIN_CHARS:
+            from .coldstore import put_block
+
+            block_key, _ = put_block(d.domain, f"{hashlib.sha256(d.source_id.encode()).hexdigest()[:16]}.blk", d.content)
         row = fetch_one(
             """
             INSERT INTO corpus_documents
@@ -88,7 +96,7 @@ def load_documents(docs: Iterable[Doc], batch_key: str | None = None) -> dict:
             """,
             (
                 d.domain, d.source, d.source_id, d.title, d.content_hash, CURRENT,
-                d.origin, d.cold_block_key, json.dumps(d.metadata), json.dumps(prov),
+                d.origin, block_key, json.dumps(d.metadata), json.dumps(prov),
             ),
         )
         if row is None:
