@@ -41,18 +41,38 @@ def _err(code: str, message: str, **extra) -> dict:
 def _register(domain: str) -> None:
     """为一个垂域注册 <domain>_search / <domain>_semantic_search / <domain>_read。"""
 
-    @mcp.tool(name=f"{domain}_search", description=f"{domain} 垂域：结构化 + 语义混合检索")
+    @mcp.tool(name=f"{domain}_search", description=f"{domain} 垂域：结构化 + 语义混合检索（可带 preset 用预设）")
     def search(
         query: str,
         limit: int = 20,
         facets: dict | None = None,
-        channels: str = "hybrid",
+        channels: str = "",
+        preset: str = "",
+        name: str = "",
     ) -> dict:
+        # channels 默认空串（而非 "hybrid"）：空=未表态，用预设预置或引擎默认；
+        # 若默认写 "hybrid" 会把预设的 channels 静默覆盖掉。
         try:
-            res = hybrid_search(
-                domain, query, embedder=_embedder_or_none(), limit=limit,
-                facets=facets, channels=channels,
-            )
+            if preset:
+                from .presets import PresetError, run_preset
+
+                kw: dict = {"name": name}
+                if facets:
+                    kw["facets"] = facets
+                if channels:
+                    kw["channels"] = channels
+                try:
+                    res = run_preset(
+                        domain, preset, query, embedder=_embedder_or_none(),
+                        limit=limit or None, **kw,
+                    )
+                except PresetError as exc:
+                    return _err("PRESET_INVALID", str(exc))
+            else:
+                res = hybrid_search(
+                    domain, query, embedder=_embedder_or_none(), limit=limit,
+                    facets=facets, channels=channels or "hybrid",
+                )
         except FacetError as exc:
             return _err("FACET_INVALID", str(exc))
         except UpstreamUnavailable as exc:
@@ -60,7 +80,17 @@ def _register(domain: str) -> None:
         return _ok({
             "results": res["results"], "count": res["count"],
             "degraded": res["degraded"], "facets_used": res["facets_used"],
+            **({"preset": res["preset"]} if res.get("preset") else {}),
         })
+
+    @mcp.tool(name=f"{domain}_presets", description=f"{domain} 垂域：列出可用检索预设")
+    def presets_tool() -> dict:
+        from .presets import PresetError, list_presets
+
+        try:
+            return _ok({"presets": list_presets(domain), "count": len(list_presets(domain))})
+        except PresetError as exc:
+            return _err("PRESET_INVALID", str(exc))
 
     @mcp.tool(name=f"{domain}_semantic_search", description=f"{domain} 垂域：纯向量语义检索")
     def semantic_search(query: str, limit: int = 20, facets: dict | None = None) -> dict:

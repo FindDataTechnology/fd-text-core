@@ -19,6 +19,7 @@ class Vertical:
     parser: Callable | None = None  # 域解析器：干净文本 -> (结构树, 元数据)
     tsv_config: str = "simple"  # 直通 PG 分词配置；cjk=True 时写入路径换引擎分词
     cjk: bool = False  # 启用引擎原生 CJK 分词（unigram+bigram，见 tokenize 模块）
+    presets: dict = field(default_factory=dict)  # 检索预设包（见 presets 模块）
     language: str = "multi"
     display: str = ""
 

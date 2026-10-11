@@ -192,3 +192,81 @@ class TestVerticalLoading:
         assert _cjk_enabled("screenplay") is True
         assert _cjk_enabled("papers") is False
         assert _cjk_enabled("nonexistent") is False
+
+
+class TestPresets:
+    """预设=声明式参数封装，不得成为绕过 facet 校验/新增检索路径的后门。"""
+
+    def _load(self):
+        from fd_text_core.verticals.registry import load_verticals
+
+        load_verticals()
+
+    def test_screenplay_has_four_presets(self):
+        self._load()
+        from fd_text_core.presets import list_presets
+
+        names = {p["name"] for p in list_presets("screenplay")}
+        assert names == {"structure", "character", "scene", "similar"}
+
+    def test_unknown_preset_rejected_with_available_list(self):
+        self._load()
+        from fd_text_core.presets import PresetError, run_preset
+
+        try:
+            run_preset("screenplay", "nope", "x")
+            raise AssertionError("应拒绝未知预设")
+        except PresetError as exc:
+            assert "nope" in str(exc) and "structure" in str(exc)
+
+    def test_no_preset_vertical_returns_empty_list(self):
+        self._load()
+        from fd_text_core.presets import list_presets
+
+        assert list_presets("papers") == []
+
+    def test_query_template_renders_name(self):
+        from fd_text_core.presets import Preset
+
+        p = Preset(name="character", description="", query_template="{name}")
+        assert p.render_query("", {"name": "竇娥"}) == "竇娥"
+
+    def test_query_template_unknown_placeholder_kept(self):
+        from fd_text_core.presets import Preset
+
+        p = Preset(name="x", description="", query_template="{name} {unknown}")
+        assert p.render_query("", {"name": "A"}) == "A {unknown}"
+
+    def test_no_template_passes_query_through(self):
+        from fd_text_core.presets import Preset
+
+        p = Preset(name="x", description="")
+        assert p.render_query("原始查询", {}) == "原始查询"
+
+    def test_merge_caller_overrides_and_facets_merge_per_key(self):
+        from fd_text_core.presets import Preset, _merge_params
+
+        p = Preset(name="x", description="", params={"facets": {"tradition": "chinese-classic"}, "limit": 10})
+        m = _merge_params(p, {"limit": 50, "facets": {"language": "zh"}})
+        assert m["limit"] == 50
+        assert m["facets"] == {"tradition": "chinese-classic", "language": "zh"}
+
+    def test_manifest_shape(self):
+        self._load()
+        from fd_text_core.presets import presets_manifest
+
+        man = presets_manifest("screenplay")
+        assert man["schema"] == "facet-preset-suite/v1"
+        assert len(man["presets"]) == 4
+
+    def test_preset_still_validates_facets(self):
+        """预设不得绕过词表校验：非法 facet 经预设调用仍须被拒。"""
+        self._load()
+        from fd_text_core.presets import run_preset
+        from fd_text_core.querylib import FacetError
+
+        try:
+            run_preset("screenplay", "structure", "x", facets={"tradition": "nope"})
+            raise AssertionError("预设不应绕过 facet 校验")
+        except FacetError:
+            pass

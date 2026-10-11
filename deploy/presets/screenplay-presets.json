@@ -1,0 +1,57 @@
+{
+  "schema": "facet-preset-suite/v1",
+  "id": "text-screenplay-presets",
+  "brand_name": "剧本",
+  "description": "剧本垂域检索预设包：结构分析 / 角色检索 / 场景检索 / 相似段落。数据来自 fd-text-core 引擎（公版经典剧本库：莎士比亚、希腊悲剧、元杂剧、明清传奇）。",
+  "mcp_servers": [
+    "fd-text-core"
+  ],
+  "presets": [
+    {
+      "name": "structure",
+      "description": "结构分析：按场景/折单元检索，用于摸清剧目骨架（幕-场-说话人层级）",
+      "params": {
+        "channels": "keyword",
+        "limit": 50
+      },
+      "query_template": null
+    },
+    {
+      "name": "character",
+      "description": "角色检索：查某角色的台词与出场段落（name 传角色名，如 竇娥 / Hamlet）",
+      "params": {
+        "channels": "hybrid",
+        "limit": 30
+      },
+      "query_template": "{name}"
+    },
+    {
+      "name": "scene",
+      "description": "场景检索：查完整场景单元内容（配 facets 限定 tradition/language 更准）",
+      "params": {
+        "channels": "hybrid",
+        "limit": 20
+      },
+      "query_template": null
+    },
+    {
+      "name": "similar",
+      "description": "相似段落：给一段参考文本，找语义相近的其他段落（纯向量通道）",
+      "params": {
+        "channels": "vector",
+        "limit": 10
+      },
+      "query_template": null
+    }
+  ],
+  "tags": [
+    "剧本",
+    "文本引擎",
+    "screenplay"
+  ],
+  "visibility": "public",
+  "commercial_ready": false,
+  "commercial_blockers": [
+    "fd-text-core 未注册公网 gateway（v1 仅网内 NodePort 直连）"
+  ]
+}
