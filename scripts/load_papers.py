@@ -59,12 +59,16 @@ def build_embedder(args) -> tuple[object, str]:
     base = os.environ.get("FDTEXT_EMBEDDING_API_BASE", "").strip()
     key = os.environ.get("FDTEXT_EMBEDDING_API_KEY", "").strip()
     model = os.environ.get("FDTEXT_EMBEDDING_MODEL", "Qwen/Qwen3-Embedding-8B").strip()
+    # MRL 截断维度必须显式下发：8B 原生 4096 维超 pgvector HNSW 的 2000 上限，
+    # 列定义是 vector(1024)——不下发 dimensions 时 API 回 4096 维向量，
+    # 插入失败/自检维度不符（2026-10-11 实测被锚点自检门拦下，正是它的职责）。
+    dim = int(os.environ.get("FDTEXT_EMBEDDING_DIM", "1024"))
     if not (base and key):
         raise SystemExit(
             "缺少 FDTEXT_EMBEDDING_API_BASE / FDTEXT_EMBEDDING_API_KEY。"
             "要验证管线而非向量质量，显式加 --fake-embed。"
         )
-    return Embedder(base, key, model), model
+    return Embedder(base, key, model, dimensions=dim), model
 
 
 def main() -> int:
