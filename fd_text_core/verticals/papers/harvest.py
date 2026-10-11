@@ -21,6 +21,12 @@ NS = {"oai": "http://www.openarchives.org/OAI/2.0/"}
 NS_RAW = {"arxiv": "http://arxiv.org/OAI/arXivRaw/"}
 MIN_INTERVAL = 3.0  # 秒；ToU 硬限额
 
+UA = "Mozilla/5.0 (compatible; fd-text-core/1.0)"
+# 实测（2026-10-11）：ListRecords 单页动辄 2.5MB、服务端 150-190s 才吐完，
+# 60s 默认超时必然读空。不带 from/until 的裸 set= 查询会被服务端挂住不返回，
+# 故日期窗是必需参数而非可选优化（见 harvest_metadata 的 docstring）。
+LIST_RECORDS_TIMEOUT = 240
+
 
 class HarvestError(RuntimeError):
     """采集失败（限速/网络/解析）。"""
@@ -97,8 +103,8 @@ class Throttler:
         self._last = max(self._last + self.interval, now) if self._last else time.monotonic()
 
 
-def _get(url: str, timeout: int = 60) -> bytes:
-    req = urllib.request.Request(url, headers={"User-Agent": "fd-text-core/0.1"})
+def _get(url: str, timeout: int = LIST_RECORDS_TIMEOUT) -> bytes:
+    req = urllib.request.Request(url, headers={"User-Agent": UA})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return resp.read()
 
@@ -118,16 +124,31 @@ def harvest_metadata(
     throttler: Throttler | None = None,
     fetcher: Callable = _get,
     resumption_token: str | None = None,
+    from_date: str | None = None,
+    until_date: str | None = None,
 ) -> Iterator[tuple[list[Paper], str | None]]:
-    """OAI-PMH ListRecords（arXivRaw）。产出 (批次, 下一个 resumption token)。"""
+    """OAI-PMH ListRecords（arXivRaw）。产出 (批次, 下一个 resumption token)。
+
+    from_date/until_date 是必需的：实测裸 `set=` 查询（无日期窗）服务端不返回
+    响应，客户端会一直挂到超时。首请求必须带日期窗，续采走 resumptionToken。
+    """
+    if resumption_token is None and not (from_date and until_date):
+        raise HarvestError(
+            "arXiv OAI 的 ListRecords 首请求必须带 from/until 日期窗："
+            "裸 set= 查询实测被服务端挂住不返回（本机与集群双出口均复现）"
+        )
     t = throttler or Throttler()
     seen = 0
     while seen < max_records:
         t.wait()
-        url = (
-            f"{OAI_BASE}?verb=ListRecords&metadataPrefix=arXivRaw"
-            + (f"&resumptionToken={resumption_token}" if resumption_token else f"&set={set_spec}")
-        )
+        if resumption_token:
+            url = f"{OAI_BASE}?verb=ListRecords&resumptionToken={resumption_token}"
+        else:
+            url = (
+                f"{OAI_BASE}?verb=ListRecords&metadataPrefix=arXivRaw"
+                + (f"&set={set_spec}" if set_spec else "")
+                + f"&from={from_date}&until={until_date}"
+            )
         raw = fetcher(url)
         try:
             root = ET.fromstring(raw)
@@ -135,6 +156,11 @@ def harvest_metadata(
             raise HarvestError(f"OAI 响应解析失败: {exc}") from exc
         err = root.find("oai:error", NS)
         if err is not None:
+            # noRecordsMatch 是「这天没东西」而非故障：逐日续采会常态化撞到，
+            # 按空批次返回，让调用方继续下一天，而不是把整轮采集中断掉。
+            if err.get("code") == "noRecordsMatch":
+                yield [], None
+                return
             raise HarvestError(f"OAI 错误 {err.get('code')}: {err.text}")
         papers: list[Paper] = []
         for rec in root.findall(".//oai:record", NS):

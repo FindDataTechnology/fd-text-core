@@ -25,7 +25,9 @@ class Settings:
     s3_bucket: str
     s3_access_key: str
     s3_secret_key: str
-    embedding_model: str = "Qwen/Qwen3-Embedding-0.6B"
+    # 8B 原生 4096 维超出 pgvector HNSW 的 2000 维上限；MRL 截断到 1024
+    # 与 vector(1024) 列定义对齐（text-embedding-upgrade-8b）
+    embedding_model: str = "Qwen/Qwen3-Embedding-8B"
     embedding_api_base: str = ""
     embedding_api_key: str = ""
     embedding_dim: int = 1024
@@ -46,7 +48,7 @@ class Settings:
             s3_bucket=os.environ.get("FDTEXT_S3_BUCKET", "fd-text"),
             s3_access_key=_require("FDTEXT_S3_ACCESS_KEY"),
             s3_secret_key=_require("FDTEXT_S3_SECRET_KEY"),
-            embedding_model=os.environ.get("FDTEXT_EMBEDDING_MODEL", "Qwen/Qwen3-Embedding-0.6B"),
+            embedding_model=os.environ.get("FDTEXT_EMBEDDING_MODEL", "Qwen/Qwen3-Embedding-8B"),
             embedding_api_base=os.environ.get("FDTEXT_EMBEDDING_API_BASE", ""),
             embedding_api_key=os.environ.get("FDTEXT_EMBEDDING_API_KEY", ""),
             embedding_dim=int(os.environ.get("FDTEXT_EMBEDDING_DIM", "1024")),

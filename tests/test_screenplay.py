@@ -132,3 +132,35 @@ def test_lyric_lines_not_treated_as_speakers():
     """【曲牌】开头的唱词不应被当成说话人。"""
     p = parse_play(REAL_CN)
     assert not any(c.startswith("【") for c in p.characters), p.characters
+
+
+class TestCopyrightGate:
+    """版权门回归：2026-10-11 实测裸词扫描把整部 Hamlet 误杀（PG 样板含 copyright）。"""
+
+    def test_pg_public_domain_header_passes(self):
+        from fd_text_core.verticals.screenplay.harvest import looks_copyrighted
+
+        pg_header = (
+            "*** START OF THE PROJECT GUTENBERG EBOOK HAMLET ***\n"
+            "This ebook is for the use of anyone anywhere in the United States...\n"
+            "Creating the works from print editions not protected by U.S. copyright law\n"
+            "means that no one owns a United States copyright in these works.\n"
+        )
+        assert looks_copyrighted(pg_header) is False
+
+    def test_modern_copyright_page_rejected(self):
+        from fd_text_core.verticals.screenplay.harvest import looks_copyrighted
+
+        assert looks_copyrighted("某剧作\n© 2019 某某\n版权所有，侵权必究") is True
+
+    def test_chinese_reserved_marker_rejected(self):
+        from fd_text_core.verticals.screenplay.harvest import looks_copyrighted
+
+        assert looks_copyrighted("本剧本保留所有权利") is True
+
+    def test_early_print_title_page_not_rejected(self):
+        """1912 年印刷版扉页的 _All rights reserved_ 属公版书，不得误杀。"""
+        from fd_text_core.verticals.screenplay.harvest import looks_copyrighted
+
+        title_page = "LONDON\nLONGMANS, GREEN, AND CO.\n_All rights reserved_\nPRINTED BY"
+        assert looks_copyrighted(title_page) is False

@@ -126,3 +126,36 @@ def test_empty_both_paths_is_rejected_by_doc_validation():
 
     src = inspect.getsource(ingest.load_documents)
     assert "正文无归处" in src, "摄取入口应校验正文归处并明确报错"
+
+
+class TestEmbedderDimensions:
+    """MRL 截断维度是显式契约（text-embedding-upgrade-8b）：8B 原生 4096 维
+    超出 pgvector HNSW 的 2000 维上限，必须请求 dimensions=1024。"""
+
+    def _embedder(self, **kw):
+        from fd_text_core.embedding import Embedder
+
+        calls = []
+
+        def fake_post(url, payload, headers, timeout):
+            calls.append(payload)
+            return 200, {"data": [{"index": 0, "embedding": [0.1] * 4}]}
+
+        e = Embedder("https://x/v1", "k", "Qwen/Qwen3-Embedding-8B",
+                     post=fake_post, sleep=lambda s: None, **kw)
+        return e, calls
+
+    def test_dimensions_goes_into_request_body(self):
+        e, calls = self._embedder(dimensions=1024)
+        e.embed(["hello"])
+        assert calls[0]["dimensions"] == 1024
+
+    def test_no_dimensions_key_when_unset(self):
+        e, calls = self._embedder()
+        e.embed(["hello"])
+        assert "dimensions" not in calls[0]
+
+    def test_default_model_is_8b(self):
+        from fd_text_core.config import Settings
+
+        assert Settings.__dataclass_fields__["embedding_model"].default == "Qwen/Qwen3-Embedding-8B"

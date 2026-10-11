@@ -47,6 +47,7 @@ class Embedder:
         api_key: str,
         model: str,
         *,
+        dimensions: int | None = None,
         timeout: int = 60,
         max_attempts: int = 6,
         post: Callable | None = None,
@@ -58,6 +59,10 @@ class Embedder:
         self.api_base = api_base.rstrip("/")
         self.api_key = api_key
         self.model = model
+        # MRL 截断维度：显式下发而非依赖服务端默认。8B 原生 4096 维超出
+        # pgvector HNSW 的 2000 维上限，必须截断才能建索引；把截断写成
+        # 请求参数，服务端哪天改了默认返回维度会立刻以维度不符暴露。
+        self.dimensions = dimensions
         self.timeout = timeout
         self.max_attempts = max_attempts
         self._post = post or _default_post
@@ -71,7 +76,9 @@ class Embedder:
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
-        payload = {"model": self.model, "input": list(texts)}
+        payload: dict = {"model": self.model, "input": list(texts)}
+        if self.dimensions:
+            payload["dimensions"] = self.dimensions
         last: Exception | None = None
         for attempt in range(1, self.max_attempts + 1):
             try:

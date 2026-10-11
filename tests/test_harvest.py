@@ -55,7 +55,8 @@ def test_harvest_parses_record_fields():
     def fetcher(url, timeout=60):
         return xml
 
-    got = list(H.harvest_metadata(max_records=1, throttler=t, fetcher=fetcher))
+    got = list(H.harvest_metadata(max_records=1, throttler=t, fetcher=fetcher,
+                                 from_date="2026-10-09", until_date="2026-10-09"))
     assert got, "应至少产出一批"
     papers, token = got[0]
     assert len(papers) == 1
@@ -82,7 +83,8 @@ def test_resumption_token_drives_next_request():
         return xml_page1 if "tok123" not in url else xml_page2
 
     t = H.Throttler(sleep=lambda s: None)
-    pages = list(H.harvest_metadata(max_records=2, throttler=t, fetcher=fetcher))
+    pages = list(H.harvest_metadata(max_records=2, throttler=t, fetcher=fetcher,
+                                    from_date="2026-10-09", until_date="2026-10-09"))
     assert len(pages) == 2
     assert "resumptionToken=tok123" in urls_seen[1]
     assert pages[1][0][0].arxiv_id == "2601.00003"
@@ -94,7 +96,9 @@ def test_oai_error_is_raised():
         b'<error code="badArgument">nope</error></OAI-PMH>'
     )
     with pytest.raises(H.HarvestError, match="badArgument"):
-        list(H.harvest_metadata(max_records=1, throttler=H.Throttler(sleep=lambda s: None), fetcher=lambda u, timeout=60: xml))
+        list(H.harvest_metadata(max_records=1, throttler=H.Throttler(sleep=lambda s: None),
+                                fetcher=lambda u, timeout=60: xml,
+                                from_date="2026-10-09", until_date="2026-10-09"))
 
 
 def test_throttler_enforces_three_second_spacing():
@@ -120,3 +124,34 @@ def test_throttler_enforces_three_second_spacing():
         H.time.monotonic = real
     gaps = [round(starts[i + 1] - starts[i], 3) for i in range(len(starts) - 1)]
     assert all(g >= 3.0 for g in gaps), f"间隔不足: {gaps}"
+
+
+def test_first_request_requires_date_window():
+    """裸 set= 查询实测被服务端挂死：首请求必须带日期窗，缺即报错。"""
+    with pytest.raises(H.HarvestError, match="日期窗"):
+        list(H.harvest_metadata(max_records=1, throttler=H.Throttler(sleep=lambda s: None),
+                                fetcher=lambda u, timeout=60: b"<x/>"))
+
+
+def test_first_request_url_carries_window_and_set():
+    urls = []
+
+    def fetcher(url, timeout=60):
+        urls.append(url)
+        return _wrap("<id>2601.00009</id><title>T</title>")
+
+    list(H.harvest_metadata(set_spec="cs", max_records=1, throttler=H.Throttler(sleep=lambda s: None),
+                            fetcher=fetcher, from_date="2026-10-09", until_date="2026-10-09"))
+    assert "set=cs" in urls[0] and "from=2026-10-09" in urls[0] and "until=2026-10-09" in urls[0]
+
+
+def test_no_records_match_yields_empty_batch_not_error():
+    """noRecordsMatch 是「这天没东西」：按空批返回，不中断逐日续采。"""
+    xml = (
+        b'<?xml version="1.0"?><OAI-PMH xmlns="http://www.openarchives.org/OAI/2.0/">'
+        b"<error code='noRecordsMatch'>empty</error></OAI-PMH>"
+    )
+    got = list(H.harvest_metadata(max_records=1, throttler=H.Throttler(sleep=lambda s: None),
+                                  fetcher=lambda u, timeout=60: xml,
+                                  from_date="2026-10-10", until_date="2026-10-10"))
+    assert got == [([], None)]

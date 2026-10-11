@@ -23,10 +23,11 @@ def _embedder_or_none():
 
     base = os.environ.get("FDTEXT_EMBEDDING_API_BASE", "")
     key = os.environ.get("FDTEXT_EMBEDDING_API_KEY", "")
-    model = os.environ.get("FDTEXT_EMBEDDING_MODEL", "Qwen/Qwen3-Embedding-0.6B")
+    model = os.environ.get("FDTEXT_EMBEDDING_MODEL", "Qwen/Qwen3-Embedding-8B")
+    dim = int(os.environ.get("FDTEXT_EMBEDDING_DIM", "1024"))
     if not (base and key):
         return None
-    return Embedder(base, key, model)
+    return Embedder(base, key, model, dimensions=dim)
 
 
 def _ok(payload: dict) -> dict:

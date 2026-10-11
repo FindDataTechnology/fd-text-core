@@ -119,7 +119,8 @@ def check_anchor() -> None:
         if not fetch_one("SELECT 1 FROM anchor_embedding WHERE tag=%s", (W.ANCHOR_TAG,)):
             print("  锚点余弦: 无锚点（首次运行将建立）")
             return
-        emb = Embedder(base, key, os.environ.get("FDTEXT_EMBEDDING_MODEL", "Qwen/Qwen3-Embedding-0.6B"))
+        emb = Embedder(base, key, os.environ.get("FDTEXT_EMBEDDING_MODEL", "Qwen/Qwen3-Embedding-8B"),
+                       dimensions=int(os.environ.get("FDTEXT_EMBEDDING_DIM", "1024")))
         sim = W.run_self_check(emb, emb.model)
         print(f"  锚点余弦: {sim:.6f}")
         if sim < W.SIMILARITY_FLOOR:
