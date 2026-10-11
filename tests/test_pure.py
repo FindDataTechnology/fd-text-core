@@ -99,3 +99,30 @@ def test_screenplay_vertical_uses_own_strategy():
     chunks = chunk_text(text, get("screenplay").strategy)
     ok, detail = verify_lossless(text, chunks)
     assert ok, detail
+
+
+def test_short_document_stores_content_and_blocks_decompose():
+    """回归：阈值以下文档正文须存入 content 列并可被切块
+    （缺陷实录：4 部剧本曾因正文无归处而 3 部失败）。
+    """
+    from fd_text_core.ingest import Doc, COLD_STORE_MIN_CHARS
+
+    short = "短篇正文，长度远低于冷存阈值。" * 3
+    assert len(short) < COLD_STORE_MIN_CHARS
+    d = Doc(domain="papers", source="s", source_id="short1", title="t", content=short)
+    # 不传 cold_block_key：修复前会写出「无正文」文档
+    assert d.cold_block_key is None
+    chunks = chunk_text(short, SlidingWindow(target=80, max_size=120))
+    assert chunks, "短文档必须能切块"
+    ok, detail = verify_lossless(short, chunks)
+    assert ok, detail
+
+
+def test_empty_both_paths_is_rejected_by_doc_validation():
+    """content 与 cold_block_key 不得同时为空——入口须拒绝。"""
+    import inspect
+
+    from fd_text_core import ingest
+
+    src = inspect.getsource(ingest.load_documents)
+    assert "正文无归处" in src, "摄取入口应校验正文归处并明确报错"

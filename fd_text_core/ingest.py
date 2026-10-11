@@ -80,23 +80,38 @@ def load_documents(docs: Iterable[Doc], batch_key: str | None = None) -> dict:
             stats["superseded"] += 1
 
         prov = Provenance.now(d.source, d.source_id).to_dict()
-        # 大正文自动落冷存（PQ 不存正文，只留指针）；小文可作为 metadata 摘录。
+        # 正文必须有确定归处：短正文存 content 列，长正文写冷存并存指针。
+        # 二者不得同时为空——否则嵌入 worker 取不到文本、无法切块（实测
+        # 4 部剧本里 3 部因此失败，见 text-engine-short-doc-storage）。
         block_key = d.cold_block_key
-        if block_key is None and len(d.content) >= COLD_STORE_MIN_CHARS:
-            from .coldstore import put_block
+        content_col = None
+        if block_key is None:
+            if len(d.content) >= COLD_STORE_MIN_CHARS:
+                from .coldstore import put_block
 
-            block_key, _ = put_block(d.domain, f"{hashlib.sha256(d.source_id.encode()).hexdigest()[:16]}.blk", d.content)
+                block_key, _ = put_block(
+                    d.domain,
+                    f"{hashlib.sha256(d.source_id.encode()).hexdigest()[:16]}.blk",
+                    d.content,
+                )
+            else:
+                content_col = d.content
+        if block_key is None and content_col is None:
+            raise ValueError(
+                f"文档 {d.domain}/{d.source}/{d.source_id} 正文无归处："
+                "content 与 cold_block_key 同时为空，拒绝入库（须补全而非静默写入）"
+            )
         row = fetch_one(
             """
             INSERT INTO corpus_documents
                 (domain, source, source_id, title, content_hash, status, origin,
-                 cold_block_key, metadata, provenance)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb)
+                 cold_block_key, content, metadata, provenance)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb)
             RETURNING id
             """,
             (
                 d.domain, d.source, d.source_id, d.title, d.content_hash, CURRENT,
-                d.origin, block_key, json.dumps(d.metadata), json.dumps(prov),
+                d.origin, block_key, content_col, json.dumps(d.metadata), json.dumps(prov),
             ),
         )
         if row is None:

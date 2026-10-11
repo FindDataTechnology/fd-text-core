@@ -188,10 +188,12 @@ def run_once(embedder: Embedder, model: str, limit: int = 50) -> WorkerResult:
 
 
 def _document_text(doc: dict) -> str:
-    """取正文：优先冷存块，其次 structured 回源（本期摄取路径暂缺者为简单返回）。"""
+    """取正文：短文档在 content 列，长文档在冷存块；二者皆空如实报错。"""
+    if doc.get("content"):
+        return doc["content"]
     if doc.get("cold_block_key"):
         return coldstore.get_block(doc["cold_block_key"])
     raise RuntimeError(
-        f"document {doc['id']} 无正文可用（冷存缺 key 且结构化正文未存）——"
+        f"document {doc['id']} 无正文可用（content 与 cold_block_key 皆为空）——"
         "属数据管线缺口，须补全而非静默跳过"
     )
