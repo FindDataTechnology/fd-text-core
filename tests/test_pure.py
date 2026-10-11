@@ -209,6 +209,14 @@ class TestPresets:
         names = {p["name"] for p in list_presets("screenplay")}
         assert names == {"structure", "character", "scene", "similar"}
 
+    def test_papers_has_four_presets(self):
+        # 四件配置的第四件在 papers 域同样落地（此前只有 screenplay 有）
+        self._load()
+        from fd_text_core.presets import list_presets
+
+        names = {p["name"] for p in list_presets("papers")}
+        assert names == {"survey", "method", "similar", "recent"}
+
     def test_unknown_preset_rejected_with_available_list(self):
         self._load()
         from fd_text_core.presets import PresetError, run_preset
@@ -220,10 +228,19 @@ class TestPresets:
             assert "nope" in str(exc) and "structure" in str(exc)
 
     def test_no_preset_vertical_returns_empty_list(self):
+        """无预设垂域如实返回空集（两个内置域现均有预设 → 用临时注册域验证契约）。"""
         self._load()
         from fd_text_core.presets import list_presets
+        from fd_text_core.chunking import SlidingWindow
+        from fd_text_core.verticals import registry as R
 
-        assert list_presets("papers") == []
+        name = "_test_nopresets"
+        fresh = R.Vertical(name=name, strategy=SlidingWindow(target=500, max_size=800), facets={})
+        R._REGISTRY[name] = fresh  # 直插注册表：本测试只为覆盖「无预设」契约
+        try:
+            assert list_presets(name) == []
+        finally:
+            R._REGISTRY.pop(name, None)
 
     def test_query_template_renders_name(self):
         from fd_text_core.presets import Preset

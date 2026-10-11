@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from ...chunking import SlidingWindow
+from ...presets import Preset
 from ..registry import Vertical, bootstrap_defaults, replace
 
 FACETS = {
@@ -23,6 +24,32 @@ class PaperParser:
         return parse_latex(text)
 
 
+# 四件配置的第四件：检索预设包（声明式参数，执行走统一 hybrid_search，
+# facet 照过词表校验）。论文场景的预设围绕「找方向 / 追方法 / 看最新」三问。
+PRESETS = {
+    "survey": Preset(
+        name="survey",
+        description="综述/方向概览：按类目宽召回，用于摸一个方向的整体面貌（配 facets 限定 cat）",
+        params={"channels": "hybrid", "limit": 30},
+    ),
+    "method": Preset(
+        name="method",
+        description="方法检索：查某方法/技术（如 transformer / federated learning）在语料中的论文",
+        params={"channels": "hybrid", "limit": 20},
+    ),
+    "similar": Preset(
+        name="similar",
+        description="相似论文：给一段摘要或题目，找语义最接近的已收录论文（纯向量通道）",
+        params={"channels": "vector", "limit": 10},
+    ),
+    "recent": Preset(
+        name="recent",
+        description="最新入库：按标题关键词找近期论文（配合 facets 的 cat 限定领域）",
+        params={"channels": "keyword", "limit": 20},
+    ),
+}
+
+
 # 垂域自身持有权威配置：覆盖 bootstrap 里的默认项（bootstrap 可能先跑）
 bootstrap_defaults()
 replace(
@@ -32,6 +59,7 @@ replace(
         facets=FACETS,
         parser=PaperParser(),
         tsv_config="simple",
+        presets=PRESETS,
         language="multi",
         display="论文",
     )
