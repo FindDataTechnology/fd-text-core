@@ -17,8 +17,11 @@ spec:
     spec:
       containers:
         - name: fd-text-core
-          image: ccr.ccs.tencentyun.com/finddata/fd-text-core:main
-          imagePullPolicy: Always
+          # 快照 sha（law-ai-official/fd-text-core-images 线，GHA 账单阻断期）——
+          # 对应真源 d118d8b（harvester 三修 + embedder dimensions）。
+          # 内容已逐项实证：t2s.json 4105 条 / harvest action=parse / load_papers dimensions。
+          image: ccr.ccs.tencentyun.com/finddata/fd-text-core:sha-3a4ec40
+          imagePullPolicy: IfNotPresent
           ports:
             - name: http
               containerPort: 8000
