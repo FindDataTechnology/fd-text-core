@@ -142,25 +142,46 @@ def fetch_gutenberg(book_id: str, *, polite: Polite | None = None, fetcher: Call
 
 def _wikisource_api(params: dict, fetcher: Callable | None) -> dict:
     """带退避的 API 调用：实测 Wikisource 对连发请求会回 429，
-    SSL 也会偶发 UNEXPECTED_EOF 瞬断——两者都是可重试的瞬时故障。"""
+    SSL 也会偶发 UNEXPECTED_EOF 瞬断——两者都是可重试的瞬时故障。
+    429 是限流（非永久拒绝），故退避要够长：5/10/20/40s——短退避会在
+    密集抓取时连续撞限，实测 2s/4s/6s 不够（2026-10-11）。"""
     import json
     import urllib.parse
 
     url = "https://zh.wikisource.org/w/api.php?" + urllib.parse.urlencode(params)
     get = fetcher or _get
     last: Exception | None = None
-    for attempt in range(4):
+    for attempt in range(5):
         if attempt:
-            time.sleep(2.0 * attempt)  # 2s/4s/6s 退避
+            time.sleep(5.0 * (2 ** (attempt - 1)))  # 5/10/20/40s
         try:
             return json.loads(get(url))
         except Exception as exc:  # URLError / HTTPError 429 / SSL EOF
             last = exc
-    raise HarvestError(f"wikisource API 重试 4 次仍失败: {last}")
+    raise HarvestError(f"wikisource API 重试 5 次仍失败: {last}")
 
 
 def _wikisource_extract(title: str, fetcher: Callable | None) -> tuple[str, str]:
-    """取单页纯文本。返回 (真实标题, 正文)。"""
+    """取单页纯文本。返回 (真实标题, 正文)。
+
+    走 `action=parse`（取模板渲染后的 HTML 再转文本），**不**用
+    `prop=extracts&explaintext`——实测后者对挂了 `{{header2}}` 等模板的页面
+    只吐出正文开头一小段（清空为模板处截断）：面子問題/第一幕 explaintext
+    仅 255 字，而 parse 渲染后 13163 字。原因：extract 基于 wikitext 的
+    纯文本化，模板内的正文被当作模板参数吞掉；parse 全展开后不丢。
+    页面不存在时 parse 返回 error，此时回落 explaintext（保留其空页处理）。
+    """
+    data = _wikisource_api(
+        {"action": "parse", "page": title, "prop": "text", "format": "json", "redirects": "1"},
+        fetcher,
+    )
+    parsed = data.get("parse") or {}
+    if parsed.get("error") is None and parsed.get("text"):
+        html = parsed["text"]
+        html = html.get("*") if isinstance(html, dict) else html
+        real_title = (parsed.get("title") or title)
+        return real_title, html_to_text(html or "")
+    # 回落：extracts 路径（旧行为；页面不存在时返回空串）
     data = _wikisource_api(
         {
             "action": "query", "prop": "extracts", "explaintext": "1",
@@ -178,56 +199,118 @@ def _wikisource_extract(title: str, fetcher: Callable | None) -> tuple[str, str]
 # 8 万+ 字，单卷 9 千字，目录壳 80-283 字——2000 能干净分开后两者。
 _WIKISOURCE_FULL_MIN = 2000
 
+# 中文数字（老舍话剧的分幕标题用「第一幕/第三場」形态；元明戏曲用「第1本」）。
+# 现有 vol_no 只认 ASCII 数字 → 「茶馆/第三幕」被解析为 0，拼接顺序随机
+# （2026-10-11 实测）。两套编号都要能解析。
+_CN_DIGITS = {"〇": 0, "零": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4,
+              "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
+
+
+def _cn_to_int(s: str) -> int | None:
+    """「三」→3、「十二」→12、「二十四」→24；不可解析返回 None。"""
+    if not s:
+        return None
+    if s.isdigit():
+        return int(s)
+    total, section = 0, 0
+    for ch in s:
+        if ch in _CN_DIGITS:
+            section = _CN_DIGITS[ch]
+        elif ch == "十":
+            section = (section or 1) * 10
+        elif ch == "百":
+            total += (section or 1) * 100
+            section = 0
+        else:
+            return None
+    return total + section
+
+
+def _vol_no(t: str) -> int:
+    """从子页标题解析序号：「第3本」/「第三幕」/「卷十二」均可，缺省 0。
+
+    序号用于拼接排序——解析失败会让卷序错乱，故中英双形态都要覆盖。
+    """
+    m = re.search(r"(?:第|卷)([0-9]+|[〇零一二两三四五六七八九十百]+)", t)
+    if not m:
+        return 0
+    return _cn_to_int(m.group(1)) or 0
+
+
+def _wikisource_subpages(title: str, fetcher: Callable | None) -> list[str]:
+    """枚举 `<title>/…` 子页（实测：老舍话剧的每幕/每场是独立子页，
+    主页面只是一张 36 字的目录壳——三层策略的「单页」层拿到它会被判为
+    目录壳拒收）。
+
+    带消歧括号的标题（「面子問題 (老舍)」）prefixsearch 直接搜全名匹配不到，
+    要用括号前的基名（实测：搜「面子問題」才返回 `面子問題 (老舍)/第一幕`）。
+    故两种查询串都试，按 `<title>/` 前缀过滤去重。
+    """
+    out: dict[str, None] = {}
+    base = title.split(" (")[0]
+    seen_queries: set[str] = set()
+    for q in (title, base):
+        if q in seen_queries:
+            continue
+        seen_queries.add(q)
+        data = _wikisource_api(
+            {"action": "query", "list": "prefixsearch", "pssearch": q,
+             "pslimit": "50", "format": "json"},
+            fetcher,
+        )
+        for r in (data.get("query") or {}).get("prefixsearch") or []:
+            t = r["title"]
+            if t.startswith(f"{title}/"):
+                out.setdefault(t, None)
+    return list(out)
+
 
 def fetch_wikisource(title: str, *, polite: Polite | None = None, fetcher: Callable | None = None) -> Play:
-    """维基文库中文古典剧本（元杂剧/明清传奇）。
+    """维基文库中文剧本（元杂剧/明清传奇/现代话剧）。
 
-    三层取文策略（实测于 2026-10-11）：
+    取文策略（实测于 2026-10-11）：先取三个候选，再取**最长者**——
       1. `<title> (全覽)` 整本页 —— 明清传奇（牡丹亭等）的权威全文形态
-      2. 单页正文 >= 2000 字 —— 元杂剧（竇娥冤等）单页即全文
-      3. 分卷拼接 —— 西廂記/第N本 形态，按前缀检索各卷后按卷序拼接
+      2. 主页面单页
+      3. 子页拼接 —— `西廂記/第N本`（分卷）与 `茶馆/第一幕`（分幕）同一枚举，
+         卷序解析器同时认「第N本」与「第三幕」（中文数字），序言/人物表类
+         无编号子页按 0 排最前
+
+    「取最长」这个判据来自两个实测反例：荷珠配主页面是 2897 字的**序言**
+    （超过 2000 阈值，若按「够长就用」会只入库序言、丢掉六场正文）；
+    而茶馆主页面是 36 字目录壳。同一规则同时覆盖两种形态。
 
     ctext.org 实测挂在 Cloudflare Turnstile 挑战之后（静态 GET 只拿到
     "Checking the security of your connection..."，2781 字节空壳），
-    故中文古典走维基文库——同为公版且可直接取文。
+    故中文剧本走维基文库——同为公版且可直接取文。
     """
     p = polite or Polite()
+    candidates: list[str] = []
+
     p.wait()
+    _t1, full_page = _wikisource_extract(f"{title} (全覽)", fetcher)
+    if full_page.strip():
+        candidates.append(full_page)
 
-    # 1) 整本页优先
-    real_title, text = _wikisource_extract(f"{title} (全覽)", fetcher)
-    if len(text) < _WIKISOURCE_FULL_MIN:
-        # 2) 单页
-        real_title, text = _wikisource_extract(title, fetcher)
+    p.wait()
+    real_title, main_page = _wikisource_extract(title, fetcher)
+    if main_page.strip():
+        candidates.append(main_page)
 
-    if len(text) < _WIKISOURCE_FULL_MIN:
-        # 3) 分卷拼接
-        data = _wikisource_api(
-            {"action": "query", "list": "prefixsearch", "pssearch": title,
-             "pslimit": "20", "format": "json"},
-            fetcher,
-        )
-        vols = [
-            r["title"]
-            for r in ((data.get("query") or {}).get("prefixsearch") or [])
-            if r["title"].startswith(f"{title}/")
-        ]
-        # 卷序：第N本 / 卷N 均可，按 N 数值升序
-        def vol_no(t: str) -> int:
-            m = re.search(r"(?:第|卷)(\d+)", t)
-            return int(m.group(1)) if m else 0
-
-        vols.sort(key=vol_no)
+    vols = _wikisource_subpages(title, fetcher)
+    if vols:
+        vols.sort(key=_vol_no)
         parts = []
         for v in vols:
             p.wait()
             _rt, vt = _wikisource_extract(v, fetcher)
-            if len(vt) >= _WIKISOURCE_FULL_MIN:
+            if vt.strip():
                 parts.append(vt)
         if parts:
-            text = "\n\n".join(parts)
-            real_title = title
+            candidates.append("\n\n".join(parts))
 
+    text = max(candidates, key=len) if candidates else ""
+    if not real_title:
+        real_title = title
     if len(text) < _WIKISOURCE_FULL_MIN:
         raise HarvestError(
             f"wikisource 未取到正文（{len(text)} 字，疑似只拿到目录壳）: {title}"

@@ -44,6 +44,13 @@ SOURCES = [
     (S.fetch_wikisource, "牡丹亭", "chinese-classic", "zh", "ancient", "明·汤显祖"),
     (S.fetch_wikisource, "桃花扇", "chinese-classic", "zh", "ancient", "清·孔尚任"),
     (S.fetch_wikisource, "長生殿", "chinese-classic", "zh", "ancient", "清·洪昇"),
+    # 现代公版话剧（老舍，1966 卒 → 2017 起大陆公有领域；维基文库挂
+    # {{Not-PD-US-old|1966}} 仅提示美国状态，本项目大陆法域运营不受影响）。
+    # 这三个 fills 了 modern-public-domain facet——该值 day one 就在词表里
+    # 但此前无任何语料（2026-10-11 侦察补入）。
+    (S.fetch_wikisource, "茶馆", "modern-public-domain", "zh", "modern", "老舍·三幕话剧（1957）"),
+    (S.fetch_wikisource, "面子問題 (老舍)", "modern-public-domain", "zh", "modern", "老舍·三幕话剧（1941）"),
+    (S.fetch_wikisource, "荷珠配", "modern-public-domain", "zh", "modern", "老舍·六场话剧（1961，据川剧改编）"),
 ]
 
 
