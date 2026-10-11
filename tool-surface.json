@@ -1,0 +1,53 @@
+{
+  "schema": "mcp-tool-surface/v1",
+  "server": "fd-text-core",
+  "entry_path": "/fd-text-core",
+  "product_line": "base",
+  "hosting": ["shared-instance"],
+  "description": "通用文本处理引擎 MCP：公版经典剧本库（莎士比亚/希腊悲剧/元杂剧/明清传奇）与论文元数据的混合检索（关键词 ⊕ 语义向量）、预设化查询、逐结果溯源。垂域以配置接入（剧本/论文），引擎核心零改动。",
+  "skills_eligible_for_packs": [
+    "screenplay-structure-analysis",
+    "screenplay-character-search",
+    "screenplay-scene-search",
+    "screenplay-similar-passages"
+  ],
+  "tool_groups": [
+    {
+      "group": "screenplay",
+      "level": "commercial",
+      "tools": [
+        "screenplay_search",
+        "screenplay_semantic_search",
+        "screenplay_read",
+        "screenplay_presets",
+        "screenplay_federated"
+      ],
+      "data_sources": [
+        "fd_text.corpus_documents（15 部公版剧本，provenance 三元组齐备）",
+        "fd_text.corpus_chunks（1906 块，pgvector 1024 维 Qwen3-Embedding-8B + CJK bigram tsvector）"
+      ],
+      "notes": "语料限公版：Gutenberg（莎翁/希腊悲剧）、Wikisource（元杂剧/明清传奇）、戏考（底本公版、转录权属存疑已如实标注）。剧本垂域无外部 connector，screenplay_federated 按契约返回 NOT_SUPPORTED。"
+    },
+    {
+      "group": "papers",
+      "level": "commercial",
+      "tools": [
+        "papers_search",
+        "papers_semantic_search",
+        "papers_read",
+        "papers_presets",
+        "papers_federated"
+      ],
+      "data_sources": [
+        "fd_text.corpus_documents（arXiv 元数据与摘要，60 篇起步）",
+        "arXiv OAI-PMH / OpenAlex / Semantic Scholar（外部开放检索编排）"
+      ],
+      "notes": "仅索引标题与摘要（arXiv 条款红线：全文仅内部处理、绝不分发）。papers_federated 走外部开放检索，只返回元数据与摘要；上游失联时如实降级披露。"
+    }
+  ],
+  "registry": {
+    "entry_path": "/fd-text-core",
+    "upstream": "http://cheap6.mesh.finddata.cn:31887/mcp",
+    "expected_tool_count": 10
+  }
+}
