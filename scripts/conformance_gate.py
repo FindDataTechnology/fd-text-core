@@ -37,7 +37,12 @@ def v(section: str, msg: str) -> None:
 
 # ---------- 1. 无损切块 ----------
 def check_lossless(sample: int = 20) -> None:
-    """抽样已入库文档，重建切块并校验还原。"""
+    """抽样已入库文档，重建切块并校验还原。
+
+    覆盖两种正文归处：长文在冷存块（cold_block_key）、短文在 content 列。
+    此前只查冷存文档——库里 75 篇里 74 篇是短文，等于门实际只覆盖 1 篇
+    （实测「已校验 1 篇」），正是 short-doc-storage 缺陷的同类盲区。
+    """
     if not os.environ.get("FDTEXT_DATABASE_URL", "").strip():
         # CI runner 进不了 tailnet：DB 类检查如实标跳过，不硬失败也不假装通过。
         # 全量口径的跑法=网内执行本脚本（垂域验收报告里给的就是网内全绿输出）。
@@ -49,9 +54,14 @@ def check_lossless(sample: int = 20) -> None:
         from fd_text_core.db import fetch_all
         from fd_text_core.verticals.registry import get_strategy
 
+        # 冷存与内联各抽一半，避免长文占比低时覆盖不到短文
         docs = fetch_all(
-            "SELECT id, domain, cold_block_key FROM corpus_documents "
-            "WHERE status='current' ORDER BY id DESC LIMIT %s", (sample,)
+            "(SELECT id, domain, cold_block_key, content FROM corpus_documents "
+            " WHERE status='current' AND cold_block_key IS NOT NULL ORDER BY id DESC LIMIT %s) "
+            "UNION ALL "
+            "(SELECT id, domain, cold_block_key, content FROM corpus_documents "
+            " WHERE status='current' AND content IS NOT NULL ORDER BY id DESC LIMIT %s)",
+            (sample, sample),
         )
     except Exception as exc:
         v("无损切块", f"无法连接数据库执行校验：{type(exc).__name__}: {exc}")
@@ -61,11 +71,21 @@ def check_lossless(sample: int = 20) -> None:
     from fd_text_core import coldstore
 
     checked = 0
+    no_body = 0
     for d in docs:
-        if not d["cold_block_key"]:
+        if d["cold_block_key"]:
+            try:
+                text = coldstore.get_block(d["cold_block_key"])
+            except Exception as exc:
+                v("无损切块", f"doc {d['id']} 冷存读取失败：{exc}")
+                continue
+        elif d["content"]:
+            text = d["content"]
+        else:
+            no_body += 1
+            v("无损切块", f"doc {d['id']} 正文无归处（content 与 cold_block_key 皆空）｜修复=重跑摄取")
             continue
         try:
-            text = coldstore.get_block(d["cold_block_key"])
             rows = fetch_all(
                 "SELECT chunk_no, chunk_text, char_start, char_end FROM corpus_chunks "
                 "WHERE document_id=%s ORDER BY chunk_no", (d["id"],)
@@ -86,7 +106,7 @@ def check_lossless(sample: int = 20) -> None:
         if not ok:
             v("无损切块", f"doc {d['id']} 还原失败：{detail}｜修复=重跑该文档切块并核对策略")
         checked += 1
-    print(f"  无损切块: 已校验 {checked} 篇")
+    print(f"  无损切块: 已校验 {checked} 篇（含冷存与内联两类正文）")
 
 
 # ---------- 2. provenance ----------
@@ -168,7 +188,14 @@ def check_schema_drift() -> None:
 
 # ---------- 5. 垂域越界 ----------
 def check_vertical_boundary(changed: list[str] | None) -> None:
-    """垂域改动不得触碰引擎核心模块。"""
+    """垂域改动不得触碰引擎核心模块。
+
+    口径说明：越界检查问的是「**垂域接入这个动作**是否改了引擎核心」。
+    `--changed-base` 取区间 diff 会把区间内**并行的独立引擎 change**
+    （如 text-cjk-tokenization 改 querylib）也算成越界——实测误报 6 项。
+    故支持 `--vertical-commits` 精确指定垂域提交，只查这些提交的改动；
+    未指定时退回区间 diff 并打印口径警告（宁可多报也别漏报，但要说清）。
+    """
     if changed is None:
         print("  垂域越界: 跳过（未传入改动文件列表）")
         return
@@ -176,6 +203,18 @@ def check_vertical_boundary(changed: list[str] | None) -> None:
     offenders = [f for f in changed if f in core_rel]
     for f in offenders:
         v("垂域越界", f"{f} 是引擎核心模块，垂域 change 不得修改｜修复=先补引擎抽象再以配置接入")
+
+
+def vertical_commit_files(commits: list[str]) -> list[str]:
+    """取指定提交触碰的文件（精确口径：垂域提交的改动面）。"""
+    files: list[str] = []
+    for c in commits:
+        out = subprocess.run(
+            ["git", "show", "--name-only", "--format=", c], cwd=REPO,
+            capture_output=True, text=True, timeout=30,
+        )
+        files.extend(l for l in out.stdout.splitlines() if l.strip())
+    return files
 
 
 # ---------- 6. 核心外部依赖 ----------
@@ -214,7 +253,9 @@ def _changed_files(base_ref: str) -> list[str]:
 def cli() -> int:
     ap = argparse.ArgumentParser(description="fd-text-core 只读质量门")
     ap.add_argument("--changed-base", default=os.environ.get("GATE_BASE_REF", ""),
-                    help="用于垂域越界检查的 git 基线（如 origin/main）")
+                    help="用于垂域越界检查的 git 基线（区间口径；多 change 并行时会误报，见 check_vertical_boundary）")
+    ap.add_argument("--vertical-commits", default=os.environ.get("GATE_VERTICAL_COMMITS", ""),
+                    help="垂域提交 sha（逗号分隔）——精确口径，只查这些提交是否触碰引擎核心")
     args = ap.parse_args()
 
     print("fd-text-core conformance gate (read-only)")
@@ -222,7 +263,16 @@ def cli() -> int:
     check_provenance()
     check_anchor()
     check_schema_drift()
-    check_vertical_boundary(_changed_files(args.changed_base) if args.changed_base else None)
+    if args.vertical_commits:
+        commits = [c.strip() for c in args.vertical_commits.split(",") if c.strip()]
+        files = vertical_commit_files(commits)
+        print(f"  垂域越界: 精确口径（{len(commits)} 个垂域提交，{len(files)} 个文件）")
+        check_vertical_boundary(files)
+    elif args.changed_base:
+        print("  垂域越界: 区间口径（多 change 并行时会把独立引擎 change 误报为越界）")
+        check_vertical_boundary(_changed_files(args.changed_base))
+    else:
+        check_vertical_boundary(None)
     check_core_imports()
 
     if Violations:
