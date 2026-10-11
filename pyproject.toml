@@ -36,6 +36,11 @@ testpaths = ["tests"]
 [tool.setuptools.packages.find]
 include = ["fd_text_core*"]
 
+# t2s.json = 繁→简映射（OpenCC TSCharacters，Apache-2.0）。归一表必须随包走：
+# 引擎每次分词都读它，缺表会让繁简互查静默退化为 0 命中（见 tokenize.fold_t2s）。
+[tool.setuptools.package-data]
+fd_text_core = ["data/*.json"]
+
 [tool.ruff]
 line-length = 120
 target-version = "py310"

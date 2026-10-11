@@ -93,11 +93,13 @@ def ensure_chunks(doc_row: dict, text: str) -> int:
     if not ok:
         raise ValueError(f"document {doc_row['id']} 切块不无损：{detail}")
     cjk = _cjk_enabled(doc_row["domain"])
+    t2s = _t2s_enabled(doc_row["domain"])
     cfg = _tsv_config(doc_row["domain"])
     for c in chunks:
         if cjk:
             # 引擎分词：token 以空格连接喂 simple 配置（simple 按空白切且不做
-            # 词干化/停用词，正好承接我们的 token）。查询侧走 cjk_tsquery 同构。
+            # 词干化/停用词，正好承接我们的 token）。查询侧走 cjk_tsquery 同构
+            # （含同一 t2s 归一开关——两侧取值必须一致，见 tokenize 模块）。
             execute(
                 """
                 INSERT INTO corpus_chunks
@@ -109,7 +111,7 @@ def ensure_chunks(doc_row: dict, text: str) -> int:
                 (
                     doc_row["domain"], doc_row["id"], c.chunk_no, c.chunk_text,
                     c.char_start, c.char_end, c.section_path,
-                    cjk_tokens_text(c.chunk_text),
+                    cjk_tokens_text(c.chunk_text, t2s=t2s),
                 ),
             )
         else:
@@ -137,6 +139,16 @@ def _cjk_enabled(domain: str) -> bool:
         return bool(get(domain).cjk)
     except KeyError:
         return False
+
+
+def _t2s_enabled(domain: str) -> bool:
+    """垂域繁简归一开关（默认 True）。未注册垂域回退 True（与垂域默认同值）。"""
+    from .verticals.registry import get
+
+    try:
+        return bool(get(domain).t2s)
+    except KeyError:
+        return True
 
 
 def _tsv_config(domain: str) -> str:

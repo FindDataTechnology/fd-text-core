@@ -75,8 +75,9 @@ def keyword_search(domain: str, query: str, limit: int, facets: dict | None = No
     if _cjk_enabled(domain):
         # 引擎分词查询：与写入侧 cjk_tokens_text 同构（两边只有一个来源，
         # 否则 token 永不相交、检索静默返回空——见 tokenize 模块 docstring）。
+        # t2s 归一开关也取自同一垂域配置：一侧折简另一侧不折同样是失配。
         # cjk_tsquery 已做字词字符过滤，无 tsquery 语法注入面。
-        tq = cjk_tsquery(query)
+        tq = cjk_tsquery(query, t2s=_t2s_enabled(domain))
         if not tq:
             return []
         sql = f"""
@@ -113,6 +114,14 @@ def _cjk_enabled(domain: str) -> bool:
         return bool(get_vertical(domain).cjk)
     except KeyError:
         return False
+
+
+def _t2s_enabled(domain: str) -> bool:
+    """繁简归一开关（与写入侧 embed_worker._t2s_enabled 同源同默认）。"""
+    try:
+        return bool(get_vertical(domain).t2s)
+    except KeyError:
+        return True
 
 
 def vector_search(
