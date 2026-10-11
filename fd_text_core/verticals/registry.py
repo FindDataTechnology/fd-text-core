@@ -17,7 +17,8 @@ class Vertical:
     strategy: Callable  # 切块策略 callable(str) -> [(start, end, section_path)]
     facets: dict[str, frozenset]  # facet 名 -> 允许取值集合
     parser: Callable | None = None  # 域解析器：干净文本 -> (结构树, 元数据)
-    tsv_config: str = "simple"  # 中文垂域接入时切 zhparser
+    tsv_config: str = "simple"  # 直通 PG 分词配置；cjk=True 时写入路径换引擎分词
+    cjk: bool = False  # 启用引擎原生 CJK 分词（unigram+bigram，见 tokenize 模块）
     language: str = "multi"
     display: str = ""
 
@@ -96,4 +97,39 @@ def bootstrap_defaults() -> None:
             register(v)
 
 
+def load_verticals() -> list[str]:
+    """导入全部内置垂域模块，使其权威配置经 replace() 生效。
+
+    为什么必须有这一步：bootstrap_defaults() 注册的是「无垂域目录也能跑」的
+    兜底配置（cjk=False 等），而垂域目录里的 replace() 才是权威配置——它只在
+    模块被 import 时执行。此前没有任何地方 import 垂域模块，于是引擎**静默
+    使用兜底配置**（实测：screenplay 的 cjk=True 从未生效，中文关键词检索
+    0 命中）。隐式加载是这类失配的温床，故显式化并导出。
+
+    返回成功加载的垂域名；单域导入失败不影响其他域（如实记录不吞掉）。
+    """
+    import importlib
+    import sys
+
+    loaded: list[str] = []
+    for name in list_verticals():
+        if name in _LOADED:
+            loaded.append(name)
+            continue
+        try:
+            importlib.import_module(f"{__package__}.{name}")
+            _LOADED.add(name)
+            loaded.append(name)
+        except ModuleNotFoundError:
+            # 兜底域（bootstrap 注册但无目录）：合法，保持兜底配置
+            pass
+        except Exception as exc:  # 垂域模块自身出错：如实报出，不静默
+            print(f"[registry] 垂域 {name} 加载失败: {type(exc).__name__}: {exc}", file=sys.stderr)
+    return loaded
+
+
+_LOADED: set[str] = set()
+
+
 bootstrap_defaults()
+load_verticals()

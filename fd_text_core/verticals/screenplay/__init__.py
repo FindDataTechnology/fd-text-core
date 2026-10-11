@@ -32,7 +32,11 @@ replace(
         strategy=SlidingWindow(target=800, max_size=1400),
         facets=FACETS,
         parser=ScreenplayParser(),
-        tsv_config="simple",  # zhparser 装机后切到中文配置（schema 不变）
+        # 引擎原生 CJK 分词（unigram+bigram）：实测 simple 直通把整段中文
+        # 当一个 token、中文查询 0 命中；zhparser 在实例不可得
+        # （见 text-cjk-tokenization）。将来装 zhparser 只需 cjk=False + 切配置。
+        cjk=True,
+        tsv_config="simple",
         language="zh",
         display="剧本",
     )

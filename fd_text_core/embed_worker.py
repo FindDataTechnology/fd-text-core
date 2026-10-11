@@ -16,6 +16,7 @@ from . import coldstore, ingest
 from .chunking import chunk_text, verify_lossless
 from .db import execute, fetch_all, fetch_one
 from .embedding import Embedder, EmbeddingUnavailable
+from .tokenize import cjk_tokens_text
 from .verticals.registry import get as get_vertical
 from .verticals.registry import get_strategy
 
@@ -91,28 +92,69 @@ def ensure_chunks(doc_row: dict, text: str) -> int:
     ok, detail = verify_lossless(text, chunks)
     if not ok:
         raise ValueError(f"document {doc_row['id']} 切块不无损：{detail}")
+    cjk = _cjk_enabled(doc_row["domain"])
+    cfg = _tsv_config(doc_row["domain"])
     for c in chunks:
-        execute(
-            """
-            INSERT INTO corpus_chunks
-                (domain, document_id, chunk_no, chunk_text, char_start, char_end,
-                 section_path, tsv, tsv_config)
-            VALUES (%s,%s,%s,%s,%s,%s,%s, to_tsvector(%s::regconfig, %s), %s)
-            ON CONFLICT (domain, document_id, chunk_no) DO NOTHING
-            """,
-            (
-                doc_row["domain"], doc_row["id"], c.chunk_no, c.chunk_text,
-                c.char_start, c.char_end, c.section_path,
-                _tsv_config(doc_row["domain"]), c.chunk_text,
-                _tsv_config(doc_row["domain"]),
-            ),
-        )
+        if cjk:
+            # 引擎分词：token 以空格连接喂 simple 配置（simple 按空白切且不做
+            # 词干化/停用词，正好承接我们的 token）。查询侧走 cjk_tsquery 同构。
+            execute(
+                """
+                INSERT INTO corpus_chunks
+                    (domain, document_id, chunk_no, chunk_text, char_start, char_end,
+                     section_path, tsv, tsv_config)
+                VALUES (%s,%s,%s,%s,%s,%s,%s, to_tsvector('simple', %s), 'engine-cjk')
+                ON CONFLICT (domain, document_id, chunk_no) DO NOTHING
+                """,
+                (
+                    doc_row["domain"], doc_row["id"], c.chunk_no, c.chunk_text,
+                    c.char_start, c.char_end, c.section_path,
+                    cjk_tokens_text(c.chunk_text),
+                ),
+            )
+        else:
+            execute(
+                """
+                INSERT INTO corpus_chunks
+                    (domain, document_id, chunk_no, chunk_text, char_start, char_end,
+                     section_path, tsv, tsv_config)
+                VALUES (%s,%s,%s,%s,%s,%s,%s, to_tsvector(%s::regconfig, %s), %s)
+                ON CONFLICT (domain, document_id, chunk_no) DO NOTHING
+                """,
+                (
+                    doc_row["domain"], doc_row["id"], c.chunk_no, c.chunk_text,
+                    c.char_start, c.char_end, c.section_path,
+                    cfg, c.chunk_text, cfg,
+                ),
+            )
     return len(chunks)
 
 
+def _cjk_enabled(domain: str) -> bool:
+    from .verticals.registry import get
+
+    try:
+        return bool(get(domain).cjk)
+    except KeyError:
+        return False
+
+
 def _tsv_config(domain: str) -> str:
+    """垂域配置优先（与 querylib 同源）；未注册垂域回退环境变量。
+
+    此前实现完全忽略 domain、只读环境变量，与查询侧读垂域配置的行为不一致
+    ——两处配置面分裂会让写入与查询用不同分词器，正是要防的静默失配。
+    """
+    from .verticals.registry import get
+
     import os
 
+    try:
+        v = get(domain)
+        if v.tsv_config:
+            return v.tsv_config
+    except KeyError:
+        pass
     return os.environ.get("FDTEXT_TSV_CONFIG", "simple")
 
 

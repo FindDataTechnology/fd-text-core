@@ -15,6 +15,7 @@ from typing import Callable, Iterable
 from .db import UpstreamUnavailable, fetch_all, fetch_one
 from .embedding import EmbeddingUnavailable, Embedder
 from .provenance import require_triplet
+from .tokenize import cjk_tsquery
 from .verticals.registry import get as get_vertical
 
 RRF_K = int(os.environ.get("FDTEXT_RRF_K", "60"))
@@ -71,21 +72,47 @@ def keyword_search(domain: str, query: str, limit: int, facets: dict | None = No
     if not query.strip():
         return []
     where, params = _filters_sql(domain, facets or {}, None)
-    sql = f"""
-        SELECT c.id, c.document_id, c.chunk_no, c.chunk_text, c.char_start, c.char_end,
-               c.section_path, d.title, d.source, d.source_id, d.provenance,
-               ts_rank_cd(c.tsv, plainto_tsquery(%s::regconfig, %s)) AS kw_score
-        FROM corpus_chunks c
-        JOIN corpus_documents d ON d.id = c.document_id AND d.status='current'
-        WHERE c.domain=%s AND c.tsv @@ plainto_tsquery(%s::regconfig, %s){where}
-        ORDER BY kw_score DESC, c.document_id, c.chunk_no
-        LIMIT %s
-    """
-    cfg = _tsv_config(domain)
-    rows = fetch_all(sql, [cfg, query, domain, cfg, query] + params + [limit])
+    if _cjk_enabled(domain):
+        # 引擎分词查询：与写入侧 cjk_tokens_text 同构（两边只有一个来源，
+        # 否则 token 永不相交、检索静默返回空——见 tokenize 模块 docstring）。
+        # cjk_tsquery 已做字词字符过滤，无 tsquery 语法注入面。
+        tq = cjk_tsquery(query)
+        if not tq:
+            return []
+        sql = f"""
+            SELECT c.id, c.document_id, c.chunk_no, c.chunk_text, c.char_start, c.char_end,
+                   c.section_path, d.title, d.source, d.source_id, d.provenance,
+                   ts_rank_cd(c.tsv, to_tsquery('simple', %s)) AS kw_score
+            FROM corpus_chunks c
+            JOIN corpus_documents d ON d.id = c.document_id AND d.status='current'
+            WHERE c.domain=%s AND c.tsv @@ to_tsquery('simple', %s){where}
+            ORDER BY kw_score DESC, c.document_id, c.chunk_no
+            LIMIT %s
+        """
+        rows = fetch_all(sql, [tq, domain, tq] + params + [limit])
+    else:
+        sql = f"""
+            SELECT c.id, c.document_id, c.chunk_no, c.chunk_text, c.char_start, c.char_end,
+                   c.section_path, d.title, d.source, d.source_id, d.provenance,
+                   ts_rank_cd(c.tsv, plainto_tsquery(%s::regconfig, %s)) AS kw_score
+            FROM corpus_chunks c
+            JOIN corpus_documents d ON d.id = c.document_id AND d.status='current'
+            WHERE c.domain=%s AND c.tsv @@ plainto_tsquery(%s::regconfig, %s){where}
+            ORDER BY kw_score DESC, c.document_id, c.chunk_no
+            LIMIT %s
+        """
+        cfg = _tsv_config(domain)
+        rows = fetch_all(sql, [cfg, query, domain, cfg, query] + params + [limit])
     for r in rows:
         r["by"] = "keyword"
     return rows
+
+
+def _cjk_enabled(domain: str) -> bool:
+    try:
+        return bool(get_vertical(domain).cjk)
+    except KeyError:
+        return False
 
 
 def vector_search(

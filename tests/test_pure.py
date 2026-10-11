@@ -159,3 +159,36 @@ class TestEmbedderDimensions:
         from fd_text_core.config import Settings
 
         assert Settings.__dataclass_fields__["embedding_model"].default == "Qwen/Qwen3-Embedding-8B"
+
+
+class TestVerticalLoading:
+    """回归：垂域模块必须被显式导入，否则 replace() 从不执行、引擎静默用兜底配置。
+
+    实测事故（2026-10-11）：screenplay 的 cjk=True 从未生效，中文关键词检索
+    0 命中——根因就是没有任何地方 import 垂域模块。
+    """
+
+    def test_builtin_verticals_loaded_and_authoritative(self):
+        from fd_text_core.verticals.registry import get, load_verticals, list_verticals
+
+        load_verticals()
+        assert set(list_verticals()) >= {"papers", "screenplay"}
+        # 垂域目录的权威配置须胜出（不是 bootstrap 兜底）
+        assert get("screenplay").cjk is True
+        assert get("papers").cjk is False
+
+    def test_load_verticals_idempotent(self):
+        from fd_text_core.verticals.registry import load_verticals
+
+        a = load_verticals()
+        b = load_verticals()
+        assert a == b
+
+    def test_cjk_toggle_reaches_query_layer(self):
+        from fd_text_core.querylib import _cjk_enabled
+        from fd_text_core.verticals.registry import load_verticals
+
+        load_verticals()
+        assert _cjk_enabled("screenplay") is True
+        assert _cjk_enabled("papers") is False
+        assert _cjk_enabled("nonexistent") is False
