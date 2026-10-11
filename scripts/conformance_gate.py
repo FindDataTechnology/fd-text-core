@@ -38,6 +38,11 @@ def v(section: str, msg: str) -> None:
 # ---------- 1. 无损切块 ----------
 def check_lossless(sample: int = 20) -> None:
     """抽样已入库文档，重建切块并校验还原。"""
+    if not os.environ.get("FDTEXT_DATABASE_URL", "").strip():
+        # CI runner 进不了 tailnet：DB 类检查如实标跳过，不硬失败也不假装通过。
+        # 全量口径的跑法=网内执行本脚本（垂域验收报告里给的就是网内全绿输出）。
+        print("  无损切块: 跳过（无 FDTEXT_DATABASE_URL，离线模式）")
+        return
     try:
         sys.path.insert(0, str(REPO))
         from fd_text_core.chunking import verify_lossless
@@ -86,6 +91,9 @@ def check_lossless(sample: int = 20) -> None:
 
 # ---------- 2. provenance ----------
 def check_provenance() -> None:
+    if not os.environ.get("FDTEXT_DATABASE_URL", "").strip():
+        print("  provenance: 跳过（无 FDTEXT_DATABASE_URL，离线模式）")
+        return
     try:
         sys.path.insert(0, str(REPO))
         from fd_text_core.db import fetch_all
