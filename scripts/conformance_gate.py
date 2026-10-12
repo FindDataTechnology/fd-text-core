@@ -43,6 +43,7 @@ HINTS = {
     "锚点余弦": ("FDTEXT_EMBEDDING_API_BASE + FDTEXT_EMBEDDING_API_KEY", "同上，并注入嵌入凭据"),
     "schema 漂移": ("FDTEXT_DATABASE_URL", "同上"),
     "垂域越界": ("--changed-base 或 --vertical-commits", "传入改动文件列表或垂域提交 sha"),
+    "语料对账": ("FDTEXT_DATABASE_URL", "同上（连库后比对 loader 清单与库内 current 集）"),
 }
 
 
@@ -422,6 +423,81 @@ def vertical_commit_files(commits: list[str]) -> list[str]:
 
 
 # ---------- 6. 核心外部依赖 ----------
+# ---------- 5b. 语料对账 ----------
+# 守门对象：loader 脚本里的采集清单（SOURCES）与库内 current 集是否一致。
+# 为什么需要：2026-10-13 实测撞到漂移——load_screenplay.py 的 SOURCES 与库内
+# current 集不一致（Gutenberg 版本换过 + 两条清单漏列），意味着「重跑 loader」
+# 会产出与现有库不同的结果，而这件事在此之前没有任何检查会发现。
+# 判据：脚本 SOURCES 的 (source, source_id) 集合 SHALL 等于库内 current 集。
+LOADERS = (
+    # (loader 脚本, domain, 采集函数名前缀 -> source 名)
+    (
+        "scripts/load_screenplay.py",
+        "screenplay",
+        {"fetch_gutenberg": "gutenberg", "fetch_wikisource": "wikisource", "fetch_xikao": "xikao"},
+    ),
+)
+
+
+def _loader_sources(path: str) -> set[tuple[str, str]]:
+    """从 loader 脚本静态解析 SOURCES 的 (source, source_id) 集合。
+
+    用正则而非 import：import 会拉起采集依赖与网络配置，门必须离线可跑。
+    """
+    text = (REPO / path).read_text()
+    start = text.index("SOURCES = [")
+    block = text[start : text.index("\n]", start)]
+    kind_map: dict[str, str] = {}
+    for loader, _domain, names in LOADERS:
+        if loader == path:
+            kind_map = names
+    out: set[tuple[str, str]] = set()
+    for kind, arg in re.findall(r'\(S\.(fetch_\w+),\s*"([^"]+)"', block):
+        src = kind_map.get(kind)
+        if src:
+            out.add((src, arg))
+    return out
+
+
+def check_corpus_reconcile() -> None:
+    url = os.environ.get("FDTEXT_DATABASE_URL", "").strip()
+    if not url:
+        skip("语料对账", "FDTEXT_DATABASE_URL")
+        return
+    try:
+        import psycopg
+
+        with psycopg.connect(url) as conn, conn.cursor() as cur:
+            total_script = 0
+            total_db = 0
+            for loader, domain, _names in LOADERS:
+                script = _loader_sources(loader)
+                cur.execute(
+                    "SELECT source, source_id FROM corpus_documents "
+                    "WHERE domain=%s AND status='current'",
+                    (domain,),
+                )
+                db = {(r[0], r[1]) for r in cur.fetchall()}
+                total_script += len(script)
+                total_db += len(db)
+                for src, sid in sorted(script - db):
+                    v("语料对账",
+                      f"{loader} 声明 {src}:{sid} 但库内无对应 current 行"
+                      "｜修复=重跑该 loader 或修正 SOURCES")
+                for src, sid in sorted(db - script):
+                    v("语料对账",
+                      f"库内 current 有 {src}:{sid}（domain={domain}）但 {loader} 未声明"
+                      "｜修复=把该条补进 loader 的 SOURCES（库是权威）")
+    except Exception as exc:
+        v("语料对账", f"无法执行对账：{type(exc).__name__}: {exc}")
+        rec("语料对账", "FAIL", f"连接异常：{type(exc).__name__}")
+        return
+    _print_result_with_detail(
+        "语料对账", f"loader 声明 {total_script} 条 / 库内 current {total_db} 部"
+    )
+
+
+# ---------- 6. 核心外部依赖 ----------
 def check_core_imports() -> None:
     """引擎核心模块不得 import 外部 keyed API 客户端。"""
     banned_dir = CORE_DIR  # 核心模块直接在包根，垂域在 verticals/ 子包
@@ -480,6 +556,7 @@ def cli() -> int:
     check_provenance()
     check_anchor()
     check_schema_drift()
+    check_corpus_reconcile()
     check_vertical_boundary(boundary_files)
     check_core_imports()
 

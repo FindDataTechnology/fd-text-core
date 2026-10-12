@@ -49,7 +49,7 @@ def test_lossless_detects_text_corruption():
 
 def test_coldstore_roundtrip_and_rejects_bad_block():
     text = "冷存往返验证。" * 500
-    assert decode_block(encode_block(text), max_chars=len(text) + 1) == text
+    assert decode_block(encode_block(text)) == text
     blob = encode_block("x")
     with pytest.raises(BlockFormatError):
         decode_block(b"XX" + blob[2:])
@@ -57,6 +57,23 @@ def test_coldstore_roundtrip_and_rejects_bad_block():
         decode_block(b"tiny")
     with pytest.raises(BlockFormatError):
         decode_block(blob[:12] + bytes([2]) + blob[13:])
+
+
+def test_coldstore_default_read_is_not_truncated():
+    """回归守门：冷存读取默认必须返回全文，不得截断。
+
+    缺陷史（2026-10-13 实测）：decode_block 默认 max_chars=200_000 曾与摄取侧
+    阈值 cold_store_min_chars=200_000 撞成同一个数，导致凡正文 ≥ 阈值的文档
+    「存全文、读回只剩前 20 万字符」——超出部分永久不进入切块与索引。
+    实测受害：doc 31（索福克勒斯三部曲）冷存 243,485 字符，索引只覆盖
+    200,000，17.9% 正文从未被检索到。本用例把「默认不截断」钉死。
+    """
+    long_text = "长文" * 120_000  # 24 万字符 > 摄取阈值 20 万
+    assert len(long_text) > 200_000
+    blob = encode_block(long_text)
+    assert decode_block(blob) == long_text, "默认读取被截断——冷存职责是无损保存"
+    # 截断仍可用，但必须由调用方显式要求
+    assert len(decode_block(blob, max_chars=200_000)) == 200_000
 
 
 def test_provenance_triplet_required():

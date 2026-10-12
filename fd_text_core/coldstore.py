@@ -45,8 +45,18 @@ def encode_block(text: str) -> bytes:
     return _HEADER.pack(MAGIC, 1, len(raw)) + compressed
 
 
-def decode_block(blob: bytes, *, max_chars: int = 200_000) -> str:
-    """FDTEXTBLOCK1 字节串 -> 文本（按 max_chars 截断返回）。"""
+def decode_block(blob: bytes, *, max_chars: int | None = None) -> str:
+    """FDTEXTBLOCK1 字节串 -> 文本。
+
+    默认**不截断**（`max_chars=None` 返回全文）；调用方要截断必须显式传入。
+
+    历史缺陷（2026-10-13 发现并修正）：本函数默认 `max_chars=200_000` 曾与
+    摄取侧阈值 `cold_store_min_chars=200_000` 撞成同一个数——凡正文 ≥ 阈值的
+    文档，写冷存时存全文、读回时却被静默截断到 20 万字符，超出部分永久不进入
+    切块与索引。实测受害：doc 31（索福克勒斯三部曲）冷存 243,485 字符，索引
+    只覆盖前 200,000，**17.9% 的正文从未被检索到**。冷存的职责是无损保存，
+    截断只能是调用方对返回值的显式裁剪，不能是存储层的默认行为。
+    """
     if len(blob) < _HEADER.size:
         raise BlockFormatError(f"块过短: {len(blob)} 字节")
     magic, version, raw_len = _HEADER.unpack(blob[: _HEADER.size])
@@ -58,7 +68,7 @@ def decode_block(blob: bytes, *, max_chars: int = 200_000) -> str:
     if len(raw) != raw_len:
         raise BlockFormatError(f"解压长度不符: header={raw_len} actual={len(raw)}")
     text = raw.decode("utf-8")
-    return text[:max_chars]
+    return text if max_chars is None else text[:max_chars]
 
 
 def put_block(domain: str, key_suffix: str, text: str) -> tuple[str, int]:
@@ -70,8 +80,9 @@ def put_block(domain: str, key_suffix: str, text: str) -> tuple[str, int]:
     return key, len(blob)
 
 
-def get_block(key: str, *, max_chars: int = 200_000) -> str:
-    """读冷存。对象缺失/格式坏时抛错，不静默返回空串。"""
+def get_block(key: str, *, max_chars: int | None = None) -> str:
+    """读冷存。默认返回全文（不截断）；要截断须显式传 max_chars。
+    对象缺失/格式坏时抛错，不静默返回空串。"""
     client, bucket = _s3()
     try:
         resp = client.get_object(Bucket=bucket, Key=key)
@@ -82,5 +93,5 @@ def get_block(key: str, *, max_chars: int = 200_000) -> str:
 
 
 def roundtrip_ok(text: str) -> bool:
-    """自检用：编解码往返一致。"""
-    return decode_block(encode_block(text), max_chars=len(text) + 1) == text
+    """自检用：编解码往返一致（全文，不截断）。"""
+    return decode_block(encode_block(text)) == text

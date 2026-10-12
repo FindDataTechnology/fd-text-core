@@ -30,9 +30,19 @@ from load_papers import build_embedder  # noqa: E402
 # (采集函数, 参数, tradition, language, period, 说明)
 # Gutenberg ID 逐一实取首页核实过标题与作者（2026-10-11）；
 # 中文剧目走 wikisource，fetch_wikisource 自带「全覽页 -> 单页 -> 分卷拼接」三层策略。
+#
+# 2026-10-13 与库对账：本清单曾与 fd_text 库内 current 集漂移（库是权威）：
+#   · 莎剧两部的 Gutenberg 版本换过——Hamlet 1524 -> 2265、Macbeth 1533 -> 1129
+#     （新版本元数据更完整：带 source_url / source_note）。旧版行留存为
+#     superseded 退役态（含一块冷存），不删（版本退役保可查是引擎契约）。
+#   · 《仲夏夜之梦》2242 在库内 current 但此前不在本清单，本次补入。
+#   · 戏考《乌盆记》06000043 同样在库内 current 而清单漏列，本次补入。
+# 现清单 9 Gutenberg + 8 Wikisource + 1 戏考 = 18 条采集指令，与库内 18 部
+# current 一一对应（Gutenberg 31 号一册含索福克勒斯三部曲，仍按 1 部计）。
 SOURCES = [
-    (S.fetch_gutenberg, "1524", "western-classic", "en", "early-modern", "Hamlet"),
-    (S.fetch_gutenberg, "1533", "western-classic", "en", "early-modern", "Macbeth"),
+    (S.fetch_gutenberg, "2265", "western-classic", "en", "early-modern", "Hamlet"),
+    (S.fetch_gutenberg, "1129", "western-classic", "en", "early-modern", "Macbeth"),
+    (S.fetch_gutenberg, "2242", "western-classic", "en", "early-modern", "A Midsummer Night's Dream"),
     (S.fetch_gutenberg, "1531", "western-classic", "en", "early-modern", "Othello"),
     (S.fetch_gutenberg, "1522", "western-classic", "en", "early-modern", "Julius Caesar"),
     (S.fetch_gutenberg, "1540", "western-classic", "en", "early-modern", "The Tempest"),
@@ -51,6 +61,9 @@ SOURCES = [
     (S.fetch_wikisource, "茶馆", "modern-public-domain", "zh", "modern", "老舍·三幕话剧（1957）"),
     (S.fetch_wikisource, "面子問題 (老舍)", "modern-public-domain", "zh", "modern", "老舍·三幕话剧（1941）"),
     (S.fetch_wikisource, "荷珠配", "modern-public-domain", "zh", "modern", "老舍·六场话剧（1961，据川剧改编）"),
+    # 戏考（京剧）：底本公版、转录整理权属存疑 -> 收录并如实标注（harvest 侧
+    # 有 looks_copyrighted 守门）。2026-10-13 对账补入：库内早有此条，本清单漏列。
+    (S.fetch_xikao, "06000043", "chinese-classic", "zh", "modern", "京剧·乌盆记（戏考转录）"),
 ]
 
 
