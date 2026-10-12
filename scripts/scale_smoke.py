@@ -134,6 +134,26 @@ def run_batch(batch_no: int, docs_per_batch: int, chunks_per_doc: int, seed: int
     return load_documents(docs, batch_key=f"scale-smoke-b{batch_no:04d}")
 
 
+
+def _claim_with_retry(claim_batch, reclaim_stale, limit: int, worker_id: int):
+    """认领一批；若首轮为空，先回收短窗口的陈旧 claim 再试一次。
+
+    为什么需要：上一批 worker 若被 kill（或本脚本 --kill-after-batches 退出），
+    它持有的任务停在 `claimed` 态。引擎的 reclaim_stale 默认只回收 >5 分钟的，
+    于是刚被杀的那批要等 5 分钟才可被重新认领——重跑时会误判「无待办」而
+    提前退出（实测撞到：pending 4607 条却 claimed=0 直接收工）。
+    """
+    tasks = claim_batch(limit)
+    if tasks:
+        return tasks
+    # 短窗口回收：只回收超过 30 秒无进展的 claim，足以覆盖「刚被杀」的情形
+    reclaim_stale(stale_after="30 seconds")
+    tasks = claim_batch(limit)
+    if tasks:
+        print(f"    [w{worker_id}] 回收短窗口陈旧 claim 后重新认领 {len(tasks)} 条", flush=True)
+    return tasks
+
+
 def _worker_loop(limit_per_round: int, max_rounds: int, worker_id: int, fake_embed: bool = False) -> dict:
     """单个嵌入工作进程：反复认领并处理，直到无待办。
 
@@ -175,6 +195,15 @@ def _worker_loop(limit_per_round: int, max_rounds: int, worker_id: int, fake_emb
         except Exception as exc:  # 自检门拒绝等：如实报错退出该 worker
             print(f"    [w{worker_id}] worker 异常退出：{type(exc).__name__}: {exc}", flush=True)
             break
+        if res.claimed == 0:
+            # 上一批被 kill 的任务停在 claimed 态、引擎默认 5 分钟才回收，
+            # 会让重跑误判「无待办」。先按短窗口回收再给一轮机会。
+            from fd_text_core.embed_worker import reclaim_stale
+
+            if reclaim_stale(stale_after="30 seconds"):
+                print(f"    [w{worker_id}] 回收短窗口陈旧 claim，重试一轮", flush=True)
+                continue
+            break
         totals["claimed"] += res.claimed
         totals["chunks"] += res.chunks
         totals["embedded"] += res.embedded
@@ -203,7 +232,7 @@ def _fake_worker_loop(emb, limit_per_round: int, max_rounds: int, worker_id: int
     totals = {"claimed": 0, "chunks": 0, "embedded": 0, "failed": 0}
     reclaim_stale()
     for _ in range(max_rounds):
-        tasks = claim_batch(limit_per_round)
+        tasks = _claim_with_retry(claim_batch, reclaim_stale, limit_per_round, worker_id)
         if not tasks:
             break
         totals["claimed"] += len(tasks)
