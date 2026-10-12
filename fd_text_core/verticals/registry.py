@@ -91,7 +91,10 @@ def bootstrap_defaults() -> None:
             name="screenplay",
             strategy=SlidingWindow(target=800, max_size=1400),
             facets=_default_screenplay_facets(),
-            tsv_config="simple",  # 接入时切 zhparser（实例装 raditional 扩展，schema 不变）
+            # 中文由引擎原生 CJK 分词承担（unigram+bigram+繁简归一，零扩展依赖）。
+            # zhparser 在引擎 PG 实例不可得（无扩展 + 宿主无管理通道），保留为可选
+            # 升级路径：将来装上后改本配置即可，引擎 schema 与迁移链零变更。
+            tsv_config="simple",
             language="zh",
             display="剧本",
         ),

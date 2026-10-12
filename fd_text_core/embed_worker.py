@@ -12,12 +12,11 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from . import coldstore, ingest
+from . import coldstore
 from .chunking import chunk_text, verify_lossless
 from .db import execute, fetch_all, fetch_one
-from .embedding import Embedder, EmbeddingUnavailable
+from .embedding import Embedder
 from .tokenize import cjk_tokens_text
-from .verticals.registry import get as get_vertical
 from .verticals.registry import get_strategy
 
 ANCHOR_TAG = "worker-startup"
@@ -201,7 +200,7 @@ def claim_batch(limit: int = 50) -> list[dict]:
 
 def run_once(embedder: Embedder, model: str, limit: int = 50) -> WorkerResult:
     """跑一批。开工前必过自检门。"""
-    sim = run_self_check(embedder, model)
+    run_self_check(embedder, model)
     res = WorkerResult()
     res.reclaimed = reclaim_stale()
     tasks = claim_batch(limit)

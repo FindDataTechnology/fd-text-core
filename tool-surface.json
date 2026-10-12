@@ -23,10 +23,10 @@
         "screenplay_federated"
       ],
       "data_sources": [
-        "fd_text.corpus_documents（15 部公版剧本，provenance 三元组齐备）",
-        "fd_text.corpus_chunks（1906 块，pgvector 1024 维 Qwen3-Embedding-8B + CJK bigram tsvector）"
+        "fd_text.corpus_documents（18 部公版剧本，provenance 三元组齐备）",
+        "fd_text.corpus_chunks（2254 块，pgvector 1024 维 Qwen3-Embedding-8B + CJK bigram tsvector）"
       ],
-      "notes": "语料限公版：Gutenberg（莎翁/希腊悲剧）、Wikisource（元杂剧/明清传奇）、戏考（底本公版、转录权属存疑已如实标注）。剧本垂域无外部 connector，screenplay_federated 按契约返回 NOT_SUPPORTED。"
+      "notes": "语料限公版：Gutenberg 9 部（莎翁/希腊悲剧）、Wikisource 8 部（元杂剧/明清传奇 5 + 老舍现代话剧 3）、戏考 1 部（底本公版、转录权属存疑已如实标注）。剧本垂域无外部 connector，screenplay_federated 按契约返回 NOT_SUPPORTED。计数以库内实测为权威（2026-10-12 核对：18 部/2254 块；此前 15 部/1906 块为老舍三剧补入前的旧快照）。"
     },
     {
       "group": "papers",

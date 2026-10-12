@@ -25,7 +25,7 @@ from fd_text_core.ingest import Doc, load_documents  # noqa: E402
 from fd_text_core.provenance import Provenance  # noqa: E402
 from fd_text_core.verticals.screenplay import harvest as S  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from load_papers import FakeEmbedder, build_embedder  # noqa: E402
+from load_papers import build_embedder  # noqa: E402
 
 # (采集函数, 参数, tradition, language, period, 说明)
 # Gutenberg ID 逐一实取首页核实过标题与作者（2026-10-11）；

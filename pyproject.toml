@@ -26,7 +26,9 @@ dependencies = [
 dev = ["pytest", "pytest-asyncio", "ruff"]
 
 [project.scripts]
-fd-text-core = "fd_text_core.cli:cli"
+# 2026-10-12 删除 `fd-text-core = "fd_text_core.cli:cli"`：该入口指向的
+# fd_text_core/cli.py 从未存在（声明报废），且全仓无任何调用（grep 确认）。
+# 实际在用的入口是下面的 fd-text-gate（质量门）。见 change text-foundation-remediation。
 fd-text-gate = "scripts.conformance_gate:cli"
 
 [tool.pytest.ini_options]

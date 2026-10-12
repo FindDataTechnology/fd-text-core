@@ -19,7 +19,7 @@
 |---|---|
 | L1 摄取 | 格式适配 → `corpus_documents`（hash 去重 / 版本退役）→ zstd 冷存 |
 | L2 结构化 | 域解析器接口 + 无损切块（拼接可还原原文、offset 连续） |
-| L3 索引 | 单一嵌入模型（Qwen3-Embedding-0.6B）+ pgvector + 写入即挂钩的嵌入管线 + 余弦自检门 |
+| L3 索引 | 单一嵌入模型（Qwen3-Embedding-**8B**，MRL 截断至 1024 维——8B 原生 4096 维超 pgvector HNSW 的 2000 上限，故必须截断）+ pgvector（HNSW 索引在 alembic 迁移链内）+ 写入即挂钩的嵌入管线 + 余弦自检门 |
 | L4 查询 | tsvector ⊕ 向量 RRF 混合、facet 过滤、provenance、单 MCP 服务（域命名空间工具） |
 
 ## 快速开始
@@ -34,6 +34,10 @@ python -m alembic -c fd_text_core/alembic.ini upgrade head
 
 # 质量门（只读，CI 必跑）
 python scripts/conformance_gate.py --changed-base origin/main
+
+# 垂域验收唯一合法口径：strict（任一 SKIPPED 即失败）
+# 需在网内执行并注入 FDTEXT_DATABASE_URL 等连接，否则 DB 类检查会如实报 SKIPPED
+python scripts/conformance_gate.py --strict --vertical-commits <sha>
 
 # 起服务
 python -m fd_text_core.server        # MCP 端点 /mcp

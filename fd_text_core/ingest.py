@@ -64,10 +64,6 @@ def load_documents(docs: Iterable[Doc], batch_key: str | None = None) -> dict:
             stats["skipped"] += 1
             continue
 
-        if existing and existing["content_hash"] == d.content_hash:
-            stats["skipped"] += 1
-            continue
-
         if existing:
             # 旧版本整行退役（保留可查），其切块与待办嵌入任务随之失效；
             # 部分唯一索引保证同一身份只有一个 current 行。
