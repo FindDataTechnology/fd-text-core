@@ -18,15 +18,9 @@ mcp = FastMCP("fd-text-core", instructions="通用文本引擎：按垂域命名
 
 def _embedder_or_none():
     """没有嵌入凭据就返回 None——由查询面如实降级，而不是崩在工具里。"""
-    from .embedding import Embedder
+    from .embedding import embedder_from_env
 
-    base = os.environ.get("FDTEXT_EMBEDDING_API_BASE", "")
-    key = os.environ.get("FDTEXT_EMBEDDING_API_KEY", "")
-    model = os.environ.get("FDTEXT_EMBEDDING_MODEL", "Qwen/Qwen3-Embedding-8B")
-    dim = int(os.environ.get("FDTEXT_EMBEDDING_DIM", "1024"))
-    if not (base and key):
-        return None
-    return Embedder(base, key, model, dimensions=dim)
+    return embedder_from_env()
 
 
 def _ok(payload: dict) -> dict:

@@ -32,6 +32,7 @@ sys.path.insert(0, str(REPO))
 from fd_text_core import embed_worker as W  # noqa: E402
 from fd_text_core.db import execute, fetch_one  # noqa: E402
 from fd_text_core.embedding import Embedder  # noqa: E402
+from fd_text_core.embedding import provider_from_env  # noqa: E402
 
 
 def step1_verify_channel(emb: Embedder, dim: int) -> None:
@@ -96,7 +97,7 @@ def main() -> int:
     if not (base and key):
         raise SystemExit("缺 FDTEXT_EMBEDDING_API_BASE / FDTEXT_EMBEDDING_API_KEY")
 
-    emb = Embedder(base, key, model, dimensions=dim)
+    emb = Embedder(base, key, model, dimensions=dim, provider=provider_from_env())
     step1_verify_channel(emb, dim)
     if args.dry_run:
         print("dry-run：仅通道校验，数据未触碰。")

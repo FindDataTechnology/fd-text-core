@@ -23,7 +23,7 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
 from fd_text_core import embed_worker  # noqa: E402
-from fd_text_core.embedding import Embedder  # noqa: E402
+from fd_text_core.embedding import Embedder, provider_from_env  # noqa: E402
 from fd_text_core.ingest import Doc, load_documents  # noqa: E402
 from fd_text_core.provenance import Provenance  # noqa: E402
 from fd_text_core.verticals.papers import harvest as H  # noqa: E402
@@ -68,7 +68,7 @@ def build_embedder(args) -> tuple[object, str]:
             "缺少 FDTEXT_EMBEDDING_API_BASE / FDTEXT_EMBEDDING_API_KEY。"
             "要验证管线而非向量质量，显式加 --fake-embed。"
         )
-    return Embedder(base, key, model, dimensions=dim), model
+    return Embedder(base, key, model, dimensions=dim, provider=provider_from_env()), model
 
 
 def main() -> int:

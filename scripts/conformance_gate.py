@@ -213,14 +213,15 @@ def check_anchor() -> None:
         sys.path.insert(0, str(REPO))
         from fd_text_core import embed_worker as W
         from fd_text_core.db import fetch_one
-        from fd_text_core.embedding import Embedder
+        from fd_text_core.embedding import Embedder, provider_from_env
 
         if not fetch_one("SELECT 1 FROM anchor_embedding WHERE tag=%s", (W.ANCHOR_TAG,)):
             rec("锚点余弦", "SKIPPED", "库内无锚点（首次运行将建立）")
             _print_result("锚点余弦")
             return
         emb = Embedder(base, key, os.environ.get("FDTEXT_EMBEDDING_MODEL", "Qwen/Qwen3-Embedding-8B"),
-                       dimensions=int(os.environ.get("FDTEXT_EMBEDDING_DIM", "1024")))
+                       dimensions=int(os.environ.get("FDTEXT_EMBEDDING_DIM", "1024")),
+                       provider=provider_from_env())
         sim = W.run_self_check(emb, emb.model)
         if sim < W.SIMILARITY_FLOOR:
             v("锚点余弦", f"{sim:.6f} < {W.SIMILARITY_FLOOR}：模型或通道漂移｜修复=确认模型后重建向量或回滚")

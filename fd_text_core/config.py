@@ -31,6 +31,11 @@ class Settings:
     embedding_api_base: str = ""
     embedding_api_key: str = ""
     embedding_dim: int = 1024
+    # 上游钉住：逗号分隔的 provider 名单（如 "SiliconFlow"），空=不下发。
+    # 用途与必要性见 embedding.Embedder 的 provider 参数注释：网关若挂了多个
+    # 都能响应同一模型名的上游，不钉住会让同一文本多次调用返回不同向量，
+    # 触发锚点自检门误报并使检索静默漂移。直连单一服务商时留空。
+    embedding_provider_only: str = ""
     tsv_config_default: str = "simple"
     cold_store_min_chars: int = 200_000
     max_read_chars: int = 200_000
@@ -52,5 +57,9 @@ class Settings:
             embedding_api_base=os.environ.get("FDTEXT_EMBEDDING_API_BASE", ""),
             embedding_api_key=os.environ.get("FDTEXT_EMBEDDING_API_KEY", ""),
             embedding_dim=int(os.environ.get("FDTEXT_EMBEDDING_DIM", "1024")),
+    # 上游钉住：逗号分隔的 provider 名单，如 "SiliconFlow"。空=不下发。
+    # 用途见 embedding.Embedder 的 provider 参数注释（网关多上游轮换会导致
+    # 同一文本返回不同向量）。直连单一服务商时留空即可。
+    embedding_provider_only=os.environ.get("FDTEXT_EMBEDDING_PROVIDER_ONLY", "").strip(),
             tsv_config_default=os.environ.get("FDTEXT_TSV_CONFIG", "simple"),
         )

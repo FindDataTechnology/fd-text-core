@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 import urllib.error
 import urllib.request
@@ -50,6 +51,7 @@ class Embedder:
         dimensions: int | None = None,
         timeout: int = 60,
         max_attempts: int = 6,
+        provider: dict | None = None,
         post: Callable | None = None,
         sleep: Callable | None = None,
         log: Callable | None = None,
@@ -63,6 +65,14 @@ class Embedder:
         # pgvector HNSW 的 2000 维上限，必须截断才能建索引；把截断写成
         # 请求参数，服务端哪天改了默认返回维度会立刻以维度不符暴露。
         self.dimensions = dimensions
+        # 上游钉住（OpenAI 兼容网关的 provider 字段，如 {"only": ["X"]}）：
+        # 网关若挂了多个都能响应同一模型名的上游，不指定时会在它们之间轮换，
+        # 而各家的量化/实现不同 → 同一段文本多次调用返回不同向量（实测 9 次里
+        # 3-4 次余弦 <0.999，最低 0.9972）。这会让锚点自检门持续误报，更糟的是
+        # 会让库内向量与查询向量来自不同副本、检索静默漂移。钉住单一上游后实测
+        # 10 次调用余弦全部 >=0.999951。
+        # 传空（默认）则不下发该字段，保持与直连服务商的既有行为一致。
+        self.provider = provider
         self.timeout = timeout
         self.max_attempts = max_attempts
         self._post = post or _default_post
@@ -79,6 +89,8 @@ class Embedder:
         payload: dict = {"model": self.model, "input": list(texts)}
         if self.dimensions:
             payload["dimensions"] = self.dimensions
+        if self.provider:
+            payload["provider"] = self.provider
         last: Exception | None = None
         for attempt in range(1, self.max_attempts + 1):
             try:
@@ -111,3 +123,30 @@ class Embedder:
         if missing:
             raise EmbeddingUnavailable(f"响应缺少第 {missing} 条的向量")
         return EmbedResult(vectors=vectors, usage=body.get("usage"))
+
+def provider_from_env() -> dict | None:
+    """把 FDTEXT_EMBEDDING_PROVIDER_ONLY 解析为网关的 provider 载荷。
+
+    逗号分隔的名单 -> {"only": [...]}；未配置返回 None（不下发该字段，
+    保持直连单一服务商的既有行为）。集中在此解析，避免各构造点各写一遍。
+    """
+    raw = os.environ.get("FDTEXT_EMBEDDING_PROVIDER_ONLY", "").strip()
+    if not raw:
+        return None
+    names = [x.strip() for x in raw.split(",") if x.strip()]
+    return {"only": names} if names else None
+
+
+def embedder_from_env() -> "Embedder | None":
+    """按环境变量构造 Embedder（含上游钉住）；缺凭据返回 None 由调用方降级。"""
+    base = os.environ.get("FDTEXT_EMBEDDING_API_BASE", "").strip()
+    key = os.environ.get("FDTEXT_EMBEDDING_API_KEY", "").strip()
+    if not (base and key):
+        return None
+    return Embedder(
+        base,
+        key,
+        os.environ.get("FDTEXT_EMBEDDING_MODEL", "Qwen/Qwen3-Embedding-8B"),
+        dimensions=int(os.environ.get("FDTEXT_EMBEDDING_DIM", "1024")),
+        provider=provider_from_env(),
+    )

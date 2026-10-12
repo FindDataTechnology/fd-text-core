@@ -142,6 +142,7 @@ def _worker_loop(limit_per_round: int, max_rounds: int, worker_id: int, fake_emb
     （集群里本来就是多副本 worker 抢同一个 claim-ledger）。
     """
     from fd_text_core.embed_worker import Embedder, run_once
+    from fd_text_core.embedding import provider_from_env
 
     ensure_vertical()  # 子进程需自行注册（注册表是进程内的）
     if fake_embed:
@@ -165,7 +166,7 @@ def _worker_loop(limit_per_round: int, max_rounds: int, worker_id: int, fake_emb
         key = os.environ["FDTEXT_EMBEDDING_API_KEY"]
         model = os.environ.get("FDTEXT_EMBEDDING_MODEL", "Qwen/Qwen3-Embedding-8B")
         dim = int(os.environ.get("FDTEXT_EMBEDDING_DIM", "1024"))
-        emb = Embedder(base, key, model, dimensions=dim)
+        emb = Embedder(base, key, model, dimensions=dim, provider=provider_from_env())
 
     totals = {"claimed": 0, "chunks": 0, "embedded": 0, "failed": 0}
     for _ in range(max_rounds):
