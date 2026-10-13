@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import re
 import sys
 from pathlib import Path
@@ -27,7 +26,7 @@ sys.path.insert(0, str(REPO))
 
 from fd_text_core import embed_worker  # noqa: E402
 from fd_text_core.coldstore import _s3  # noqa: E402
-from fd_text_core.ingest import Doc, load_documents  # noqa: E402
+from fd_text_core.ingest import Doc, iter_structured, load_documents  # noqa: E402
 from fd_text_core.provenance import Provenance  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from load_papers import build_embedder  # noqa: E402
@@ -91,59 +90,6 @@ def _index_header(md: dict, row: dict) -> str:
     if md.get("doc_type"):
         parts.append(f"文种：{md['doc_type']}")
     return " ".join(parts)
-
-
-def iter_structured_jsonl(s3, bucket: str, domain: str, limit: int = 1000):
-    """读 `<bucket>/<domain>/structured/*.jsonl`，**按 run 折叠为最新版**后逐行产出。
-
-    为什么必须折叠（实测踩到）：分片键含 run id 且不可变，故同一文档会随每次
-    重抓出现多份分片（实测 3 次重抓后同一篇有 3 行）。若逐行全部入库：
-      · 同批内先插入 A 版、再插入 B 版 → 引擎把 A 标记为 superseded，
-        再遇 C 版时又要标记 B 为 superseded，而 **A 已是 superseded**，
-        撞上 `uq_document_current (domain,source,source_id,status)` 唯一约束
-        （该约束允许一 current + 一 superseded，但不允许两个 superseded）。
-      · 结果整批入库失败，且报错指向约束而非根因。
-
-    折叠规则（照 fd-law-data 的成熟形态）：分片键按字节序排序即 run 时间序，
-    同一 source_id 后出现者胜（latest-wins）。这样每篇只入库一行，
-    且是最新一次抓取的结果。
-
-    为什么不改用引擎的 `ingest.iter_structured`：见模块 docstring（它对真实
-    boto3 客户端必然抛 TypeError，属引擎核心缺陷，不在本 change 改动面内）。
-    """
-    prefix = f"{domain}/structured/"
-    kwargs = {"Bucket": bucket, "Prefix": prefix}
-    continuation = None
-    # 按分片键排序后折叠：键含 14 位 run 时间戳，字节序即时间序
-    parts: list[tuple[str, str]] = []  # (key, body_text)
-    while True:
-        if continuation:
-            kwargs["ContinuationToken"] = continuation
-        resp = s3.list_objects_v2(**kwargs)
-        for obj in resp.get("Contents", []):
-            key = obj["Key"]
-            if not key.endswith(".jsonl"):
-                continue
-            body = s3.get_object(Bucket=bucket, Key=key)["Body"].read()
-            parts.append((key, body.decode("utf-8")))
-        if not resp.get("IsTruncated"):
-            break
-        continuation = resp.get("NextContinuationToken")
-
-    folded: dict[str, dict] = {}
-    for key, text in sorted(parts, key=lambda kv: kv[0]):
-        for line in text.splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            row = json.loads(line)
-            sid = f"{row.get('source')}:{row.get('source_id')}"
-            folded[sid] = row  # 后出现者胜（分片已按 run 时间序排列）
-
-    for i, row in enumerate(folded.values()):
-        if i >= limit:
-            return
-        yield row
 
 
 def rows_to_docs(rows) -> tuple[list[Doc], list[str]]:
@@ -219,7 +165,7 @@ def main() -> int:
 
     s3, bucket = _s3()
     print(f"[read] s3://{bucket}/{DOMAIN}/structured/  (limit={args.limit})")
-    rows = list(iter_structured_jsonl(s3, bucket, DOMAIN, limit=args.limit))
+    rows = list(iter_structured(s3, bucket, DOMAIN, limit=args.limit))
     print(f"[read] 读到 {len(rows)} 行")
 
     docs, skipped = rows_to_docs(rows)

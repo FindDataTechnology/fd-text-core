@@ -130,15 +130,23 @@ def load_documents(docs: Iterable[Doc], batch_key: str | None = None) -> dict:
     return stats
 
 
-def iter_structured(s3: Any, domain: str, limit: int = 1000) -> Iterator[dict]:
-    """从 s3 客户端（boto3）读 `<bucket>/<domain>/structured/*.jsonl` 逐行产出 dict。"""
-    import io
+def iter_structured(s3: Any, bucket: str, domain: str, limit: int = 1000) -> Iterator[dict]:
+    """读 `<bucket>/<domain>/structured/*.jsonl`，按 run 折叠为最新版后产出 dict。
 
-    bucket = s3._bucket if hasattr(s3, "_bucket") else None  # 测试替身可提供
+    桶名 SHALL 为显式参数：不从客户端属性反查（曾从 `s3._bucket` 取，而该属性
+    只是测试替身的约定，真实 boto3 客户端没有——`Bucket=None` 传 botocore 必然
+    TypeError，生产路径从未跑通。gov 垂域接入时实测暴露）。
+
+    **按 run 折叠为最新版**（latest-wins）：分片键含 run id 且不可变，同一文档
+    会随每次重抓出现多份分片；不折叠则逐行全入库撞版本退役路径（同一身份
+    多行 → 多次退役）。规则 = 分片键字节序排序（键含 14 位 run 时间戳，
+    字节序即时间序）、同一 `(source, source_id)` 后出现者胜。limit 按
+    折叠后计数。
+    """
     prefix = f"{domain}/structured/"
     kwargs = {"Bucket": bucket, "Prefix": prefix}
     continuation = None
-    seen = 0
+    parts: list[tuple[str, bytes]] = []  # (key, body)
     while True:
         if continuation:
             kwargs["ContinuationToken"] = continuation
@@ -147,17 +155,26 @@ def iter_structured(s3: Any, domain: str, limit: int = 1000) -> Iterator[dict]:
             key = obj["Key"]
             if not key.endswith(".jsonl"):
                 continue
-            body = s3.get_object(Bucket=bucket, Key=key)["Body"].read()
-            for line in io.BytesIO(body):
-                line = line.strip()
-                if line:
-                    yield json.loads(line)
-                    seen += 1
-                    if seen >= limit:
-                        return
+            parts.append((key, s3.get_object(Bucket=bucket, Key=key)["Body"].read()))
         if not resp.get("IsTruncated"):
-            return
+            break
         continuation = resp.get("NextContinuationToken")
+
+    folded: dict[str, dict] = {}
+    for key, body in sorted(parts, key=lambda kv: kv[0]):
+        for line in body.decode("utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            row = json.loads(line)
+            folded[f"{row.get('source')}:{row.get('source_id')}"] = row  # 后出现者胜
+
+    seen = 0
+    for row in folded.values():
+        if seen >= limit:
+            return
+        yield row
+        seen += 1
 
 
 def current_document_ids(domain: str) -> list[int]:
