@@ -1,0 +1,103 @@
+{
+  "_comment": "剧本垂域标注查询集（change text-retrieval-eval 任务 4.2）。中英各半以覆盖 CJK 与英文两条检索路径。跑分：python3 scripts/eval_retrieval.py --domain screenplay [--store]",
+  "_provenance": {
+    "built_at": "2026-10-13",
+    "corpus": "fd_text / domain=screenplay",
+    "corpus_size": 18,
+    "how_targets_chosen": "目标为该剧独有的角色名或剧名：每条 q 中的判别串已在库内逐条核验只出现于目标文档（角色名/剧名在 18 部剧之间不重叠）。判定规则是「判别串唯一命中」。注意 Gutenberg 版本用古拼写（auoid/haue/Theft），故现代引文（如 'Out, damned spot'）在库内不出现，标注一律锚定角色名与剧名，不锚定现代拼写的台词。",
+    "judgment_strength": "strong",
+    "note": "语料 18 部公版经典（9 部 Gutenberg 西文 + 8 部维基文库中文 + 1 部戏考），单人语料规模小但判别串唯一，故判定强度定为 strong。中英各半的设计目的：同时检验 CJK 分词路径（中文剧目）与英文分词路径，任一路径退化都会在对应条目上暴露。"
+  },
+  "queries": [
+    {
+      "q": "Polonius Ophelia",
+      "intent": "character_en",
+      "expect_doc_id": 7481,
+      "why": "Polonius 与 Ophelia 均为《Hamlet》独有角色名（Sonnet 等其它 Gutenberg 文本不含）"
+    },
+    {
+      "q": "Banquo Duncan Rosse",
+      "intent": "character_en",
+      "expect_doc_id": 7480,
+      "why": "Banquo/Duncan/Rosse 为《Macbeth》独有角色名"
+    },
+    {
+      "q": "Titania Oberon Peter Quince",
+      "intent": "character_en",
+      "expect_doc_id": 7482,
+      "why": "《A Midsummer Night's Dream》独有角色名"
+    },
+    {
+      "q": "Desdemona Cassio Iago",
+      "intent": "character_en",
+      "expect_doc_id": 7483,
+      "why": "《Othello》独有角色名"
+    },
+    {
+      "q": "BRUTUS CASSIUS Calphurnia",
+      "intent": "character_en",
+      "expect_doc_id": 7484,
+      "why": "《Julius Caesar》独有角色名"
+    },
+    {
+      "q": "Prospero Caliban Ariel Miranda",
+      "intent": "character_en",
+      "expect_doc_id": 7485,
+      "why": "《The Tempest》独有角色名"
+    },
+    {
+      "q": "竇娥冤 竇天章",
+      "intent": "character_zh",
+      "expect_doc_id": 7493,
+      "why": "《竇娥冤》剧名与主角名（元·关汉卿），维基文库版"
+    },
+    {
+      "q": "崔鶯鶯 西廂記",
+      "intent": "character_zh",
+      "expect_doc_id": 7494,
+      "why": "《西廂記》剧名与女主角名（元·王实甫）"
+    },
+    {
+      "q": "杜麗娘 柳夢梅",
+      "intent": "character_zh",
+      "expect_doc_id": 7495,
+      "why": "《牡丹亭》男女主角名（明·汤显祖）——注意「牡丹亭」三字在其它文本里也出现，故用角色名组合"
+    },
+    {
+      "q": "李香君 侯方域",
+      "intent": "character_zh",
+      "expect_doc_id": 7496,
+      "why": "《桃花扇》男女主角名（清·孔尚任）"
+    },
+    {
+      "q": "楊貴妃 唐明皇",
+      "intent": "character_zh",
+      "expect_doc_id": 7497,
+      "why": "《長生殿》主角名（清·洪昇）"
+    },
+    {
+      "q": "王利发 裕泰茶馆 唐铁嘴",
+      "intent": "character_zh",
+      "expect_doc_id": 7498,
+      "why": "老舍《茶馆》人物与场景名（现代公版，维基文库版）"
+    },
+    {
+      "q": "Agamemnon Clytemnestra",
+      "intent": "character_en",
+      "expect_doc_id": 7486,
+      "why": "《The Agamemnon of Aeschylus》主角名"
+    },
+    {
+      "q": "Oedipus Antigone",
+      "intent": "character_en",
+      "expect_doc_id": 7487,
+      "why": "索福克勒斯剧集（Gutenberg 31 号含 Oedipus 三部与 Antigone）"
+    },
+    {
+      "q": "Medea Jason",
+      "intent": "character_en",
+      "expect_doc_id": 7488,
+      "why": "《Medea of Euripides》主角名"
+    }
+  ]
+}

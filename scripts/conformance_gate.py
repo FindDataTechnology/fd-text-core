@@ -44,6 +44,8 @@ HINTS = {
     "schema 漂移": ("FDTEXT_DATABASE_URL", "同上"),
     "垂域越界": ("--changed-base 或 --vertical-commits", "传入改动文件列表或垂域提交 sha"),
     "语料对账": ("FDTEXT_DATABASE_URL", "同上（连库后比对 loader 清单与库内 current 集）"),
+    "检索评测": ("--eval-domain <域> 或 --eval-all（+ FDTEXT_EMBEDDING_API_*）",
+                 "同上，并注入嵌入凭据；或 python3 scripts/eval_retrieval.py --all --store"),
 }
 
 
@@ -474,6 +476,71 @@ def vertical_commit_files(commits: list[str]) -> list[str]:
     return files
 
 
+# ---------- 7. 检索评测（可选第八项） ----------
+def check_retrieval_eval(domain: str | None, k: int = 10) -> None:
+    """检索评测：跑分器在标注集上的验收线（混合不低于任一单通道）。
+
+    **为什么默认关、必须显式开启**：本项比既有诸项重得多（N 条查询 × 3 通道，
+    每条向量查询一次嵌入调用），把它默认塞进门会让每次 CI 都慢且需要嵌入凭据。
+    但一旦开启，缺标注集或缺嵌入凭据即按 SKIPPED 如实报告并按严格模式失败
+    ——沿既有三值口径，不新造语义（见 change text-retrieval-eval 的 design D4）。
+    """
+    if not domain:
+        return  # 未开启：不出现在结果里（保持既有七项的行为完全不变）
+    try:
+        from fd_text_core.eval import DatasetError, load_dataset
+        from fd_text_core.eval import runner, store
+    except Exception as exc:  # eval 包不可导入（异常安装）：如实报 FAIL
+        v("检索评测", f"评测模块不可导入：{type(exc).__name__}: {exc}")
+        rec("检索评测", "FAIL", f"导入异常：{type(exc).__name__}")
+        return
+
+    try:
+        ds = load_dataset(domain)
+    except DatasetError as exc:
+        v("检索评测", f"垂域 {domain} 标注集不可用：{exc}")
+        skip("检索评测", f"垂域 {domain} 的标注集（见上方说明）")
+        return
+
+    from fd_text_core.embedding import embedder_from_env
+
+    emb = embedder_from_env()
+    if emb is None:
+        skip("检索评测", "FDTEXT_EMBEDDING_API_BASE + FDTEXT_EMBEDDING_API_KEY（向量通道需要）")
+        return
+
+    try:
+        rep = runner.run_eval(ds, k=k, embedder=emb, check_expects=store.check_expects_exist)
+    except Exception as exc:
+        v("检索评测", f"跑分异常：{type(exc).__name__}: {exc}")
+        rec("检索评测", "FAIL", f"跑分异常：{type(exc).__name__}")
+        return
+
+    if rep.missing_expects:
+        v("检索评测",
+          f"标注集有 {len(rep.missing_expects)} 条期望命中文档在库内缺失"
+          "｜修复=更新标注集（语料重建会使旧 id 失效）")
+    if rep.degraded:
+        # 向量通道降级 -> 验收线不可判定：如实 SKIPPED 而非给通过判定
+        v("检索评测", f"向量通道降级：{rep.degraded}")
+        skip("检索评测", "可用的嵌入通道（当前降级，验收线不可判定）")
+        return
+
+    verdict = rep.hybrid_not_worse
+    hyb = rep.summary.get("hybrid", {})
+    kw = rep.summary.get("keyword", {})
+    vec = rep.summary.get("vector", {})
+    detail = (f"{domain} k={k}：hybrid {hyb.get('hit@k')}/MRR {hyb.get('mrr')} vs "
+              f"keyword {kw.get('hit@k')}/{kw.get('mrr')} vs vector {vec.get('hit@k')}/{vec.get('mrr')}")
+    if verdict and not rep.missing_expects:
+        rec("检索评测", "PASS", detail)
+    else:
+        if not verdict:
+            v("检索评测", f"混合通道未达验收线（应不低于任一单通道）：{detail}")
+        rec("检索评测", "FAIL", detail)
+    _print_result_with_detail("检索评测", detail)
+
+
 # ---------- 6. 核心外部依赖 ----------
 # ---------- 5b. 语料对账 ----------
 # 守门对象：loader 脚本里的采集清单（SOURCES）与库内 current 集是否一致。
@@ -589,6 +656,10 @@ def cli() -> int:
                     help="用于垂域越界检查的 git 基线（区间口径；多 change 并行时会误报，见 check_vertical_boundary）")
     ap.add_argument("--vertical-commits", default=os.environ.get("GATE_VERTICAL_COMMITS", ""),
                     help="垂域提交 sha（逗号分隔）——精确口径，只查这些提交是否触碰引擎核心")
+    ap.add_argument("--eval-domain", default=os.environ.get("GATE_EVAL_DOMAIN", ""),
+                    help="开启检索评测检查项并指定垂域（默认关；--eval-all 则跑全部已交付标注集）")
+    ap.add_argument("--eval-all", action="store_true",
+                    help="开启检索评测并覆盖包内全部已交付标注集")
     ap.add_argument("--strict", action="store_true",
                     help="严格模式：任一 SKIPPED 或 FAIL 均导致非零退出码（垂域验收唯一合法口径）")
     args = ap.parse_args()
@@ -611,6 +682,17 @@ def cli() -> int:
     check_corpus_reconcile()
     check_vertical_boundary(boundary_files)
     check_core_imports()
+    # 第八项：检索评测（可选，默认关——见 check_retrieval_eval 的说明）
+    if getattr(args, "eval_all", False):
+        try:
+            from fd_text_core.eval import list_datasets
+            for _d in list_datasets():
+                check_retrieval_eval(_d)
+        except Exception as exc:
+            v("检索评测", f"枚举标注集失败：{type(exc).__name__}: {exc}")
+            rec("检索评测", "FAIL", f"枚举异常：{type(exc).__name__}")
+    else:
+        check_retrieval_eval(getattr(args, "eval_domain", "") or None)
 
     passed = [n for n, s, _ in Results if s == "PASS"]
     failed = [n for n, s, _ in Results if s == "FAIL"]
@@ -625,7 +707,11 @@ def cli() -> int:
         print("\n—— 未覆盖清单（本环境未实跑，不得以任何形式视为通过）——")
         for n in skipped:
             missing, how = HINTS.get(n, ("未知", "见 GATE 文档"))
-            print(f"  · {n}：缺 {missing}")
+            # 优先用本次实登记的原因：静态 HINTS 是「该项一般缺什么」，而本次可能是
+            # 另一种缺法（如评测项开了 --eval-domain 却缺嵌入凭据）——此时报
+            # 「缺 --eval-domain」会把人引向错误的修复方向（实测踩到）。
+            detail = next((d for name, st, d in Results if name == n and st == "SKIPPED"), "")
+            print(f"  · {n}：{detail or f'缺 {missing}'}")
             print(f"    补跑：{how}")
 
     if Violations:

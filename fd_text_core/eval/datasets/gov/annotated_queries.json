@@ -5,6 +5,7 @@
     "corpus": "fd_text / domain=gov",
     "corpus_size": 212,
     "how_targets_chosen": "目标文档的文号在库内唯一（无同号文档），保证「命中即正确」可判定；id 为库内 corpus_documents.id（2026-10-13 清库重摄取后的 id）",
+    "judgment_strength": "strong",
     "note": "标注是「期望命中」而非「唯一正确」——公文间大量互相引用，其它文档也可能合理地含该查询词。故指标是 hit@k（目标是否进前 k），不是精确率。"
   },
   "queries": [

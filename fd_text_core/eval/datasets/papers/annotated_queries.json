@@ -1,0 +1,97 @@
+{
+  "_comment": "论文垂域标注查询集（change text-retrieval-eval 任务 4.1）。跑分：python3 scripts/eval_retrieval.py --domain papers [--store]",
+  "_provenance": {
+    "built_at": "2026-10-13",
+    "corpus": "fd_text / domain=papers",
+    "corpus_size": 60,
+    "how_targets_chosen": "目标为该主题在库内的唯一 arXiv 条目：每条的 q 都取自该论文独有术语（系统名/方法名/专有名词），并已在库内逐条核实无第二篇含同一术语。判定规则是「术语唯一性」而非「主题唯一性」——同一大领域（如量化/LLM 服务）在库内有多篇，故查询必须锚定到专有名词而非泛主题词。",
+    "judgment_strength": "medium",
+    "note": "该域判定强度低于 gov（medium vs strong），原因有二：① 语料只有元数据+摘要（82 块），正文未入库，检索面天然窄；② 主题词（如 'quantum'、'LLM serving'）在库内多篇出现，故标注一律锚定专有名词（Mooncake / C-LoRA / InfiFPO 等）而非主题词。因此本域数字适合作为**管线健康度**度量（能否按专有名词命中唯一目标），不宜与 gov 的数字并列比较检索'质量高低'。"
+  },
+  "queries": [
+    {
+      "q": "Mooncake KVCache-centric disaggregated architecture",
+      "intent": "proprietary_name",
+      "expect_doc_id": 7441,
+      "why": "Mooncake 是 Kimi 的服务平台名，库内唯一"
+    },
+    {
+      "q": "Thought-Like-Pro self-bootstrapped Prolog-based chain-of-thought",
+      "intent": "proprietary_name",
+      "expect_doc_id": 7442,
+      "why": "Thought-Like-Pro 为方法名，库内唯一"
+    },
+    {
+      "q": "C-LoRA continual low-rank adaptation visual models",
+      "intent": "proprietary_name",
+      "expect_doc_id": 7456,
+      "why": "C-LoRA 为方法名，库内唯一（与标准 LoRA 区分）"
+    },
+    {
+      "q": "InfiFPO implicit model fusion preference optimization",
+      "intent": "proprietary_name",
+      "expect_doc_id": 7466,
+      "why": "InfiFPO 为方法名，库内唯一"
+    },
+    {
+      "q": "DDL deepfake detection and localization diversified scenarios dataset",
+      "intent": "proprietary_name",
+      "expect_doc_id": 7477,
+      "why": "DDL 数据集名，库内唯一"
+    },
+    {
+      "q": "quantum gate reordering distributed compiling data centers",
+      "intent": "topic",
+      "expect_doc_id": 7478,
+      "why": "主题词组合（quantum + gate reordering + data centers）在库内唯一指向该篇；量子类论文虽多，但'gate reordering 分布式编译'仅此一篇"
+    },
+    {
+      "q": "VesselSDF distance field vascular network reconstruction",
+      "intent": "proprietary_name",
+      "expect_doc_id": 7476,
+      "why": "VesselSDF 为方法名，库内唯一"
+    },
+    {
+      "q": "BEAT balanced frequency adaptive tuning long-term time-series forecasting",
+      "intent": "proprietary_name",
+      "expect_doc_id": 7453,
+      "why": "BEAT 为方法名，库内唯一"
+    },
+    {
+      "q": "Stackelberg POMDP learning to lead reinforcement learning",
+      "intent": "proprietary_name",
+      "expect_doc_id": 7424,
+      "why": "Stackelberg POMDP 为模型名，库内唯一"
+    },
+    {
+      "q": "MAGPIE multilevel-adaptive-guided solver ptychographic phase retrieval",
+      "intent": "proprietary_name",
+      "expect_doc_id": 7464,
+      "why": "MAGPIE 为求解器名，库内唯一"
+    },
+    {
+      "q": "Delphos reinforcement learning framework assisting discrete choice",
+      "intent": "proprietary_name",
+      "expect_doc_id": 7471,
+      "why": "Delphos 为框架名，库内唯一"
+    },
+    {
+      "q": "isometric tensor network states computational complexity",
+      "intent": "topic",
+      "expect_doc_id": 7433,
+      "why": "该术语组合在库内唯一；量子/复杂度类论文多篇，但'isometric tensor network'仅此一篇"
+    },
+    {
+      "q": "Wildcards all maximum anticliques graph compression",
+      "intent": "topic",
+      "expect_doc_id": 7420,
+      "why": "图论压缩主题，库内唯一"
+    },
+    {
+      "q": "Authentication behavior-based driver breaking",
+      "intent": "topic",
+      "expect_doc_id": 7428,
+      "why": "驾驶员行为认证主题，库内唯一"
+    }
+  ]
+}

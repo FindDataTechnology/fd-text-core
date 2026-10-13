@@ -41,7 +41,10 @@ include = ["fd_text_core*"]
 # t2s.json = 繁→简映射（OpenCC TSCharacters，Apache-2.0）。归一表必须随包走：
 # 引擎每次分词都读它，缺表会让繁简互查静默退化为 0 命中（见 tokenize.fold_t2s）。
 [tool.setuptools.package-data]
-fd_text_core = ["data/*.json"]
+# eval/datasets 必须随包走：标注查询集是引擎级评测的输入工件，而 Dockerfile 只
+# COPY fd_text_core/ scripts/ deploy/（tests 不进镜像），故数据集不能放 tests 下
+# —— 否则容器内与质量门都读不到（见 change text-retrieval-eval 的 design D1）。
+fd_text_core = ["data/*.json", "eval/datasets/**/*.json"]
 
 [tool.ruff]
 line-length = 120
