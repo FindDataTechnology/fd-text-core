@@ -148,10 +148,13 @@ class GovSectionStrategy:
             return []
         marks = self._heading_positions(text)
         if not marks:
-            # 无层级标记（如公告类短文）：整篇一块，但超长时按句切
+            # 无层级标记（如公告类短文）：整篇一块，但超长时按句切。
+            # 注意 SlidingWindow 产出的是 (start, end, path) **三元组**，
+            # 不是 Chunk 对象——按对象取属性会 AttributeError（实测在
+            # 6465 字符的招聘公示上炸出：该类文档无层级标记且超长）。
             if len(text) <= self.max_size:
                 return [(0, len(text), None)]
-            return [(c.char_start, c.char_end, None) for c in self._fallback(text)]
+            return list(self._fallback(text))
 
         spans: list[tuple[int, int, str | None]] = []
         # 首个标题之前的前言（标题/文号/主送等）自成一块

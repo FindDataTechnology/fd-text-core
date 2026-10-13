@@ -76,8 +76,23 @@ def _default_screenplay_facets() -> dict:
     }
 
 
+def _default_gov_facets() -> dict:
+    return {
+        "issuer": frozenset({"其他"}),
+        "doc_type": frozenset({"通知", "公告", "函", "意见"}),
+        "period": frozenset({"2026"}),
+    }
+
+
 def bootstrap_defaults() -> None:
-    """注册内置垂域默认项。垂域可用 register 覆盖同名项以替换策略/词表。"""
+    """注册内置垂域默认项。垂域可用 register 覆盖同名项以替换策略/词表。
+
+    这里必须列全垂域名：`load_verticals()` 只导入**已在注册表里**的名字，
+    故未在此登记的垂域即使目录存在也永远不会被加载——实测 gov 域入库后
+    嵌入 worker 报「未注册垂域: gov；已注册=['papers','screenplay']」，
+    因为没有任何代码路径把它放进注册表。此处是兜底配置，垂域目录里的
+    replace() 才是权威配置（同 papers/screenplay）。
+    """
     for v in (
         Vertical(
             name="papers",
@@ -97,6 +112,15 @@ def bootstrap_defaults() -> None:
             tsv_config="simple",
             language="zh",
             display="剧本",
+        ),
+        Vertical(
+            name="gov",
+            strategy=SlidingWindow(target=800, max_size=1500),
+            facets=_default_gov_facets(),
+            # 中文垂域：与 screenplay 同理走引擎原生 CJK 分词（无扩展依赖）
+            tsv_config="simple",
+            language="zh",
+            display="公文",
         ),
     ):
         if v.name not in _REGISTRY:

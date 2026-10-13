@@ -315,6 +315,31 @@ def test_chunking_short_doc_single_block():
     assert chunks[0].chunk_text == d.body
 
 
+def test_chunking_long_doc_without_headings_falls_back_to_sliding_window():
+    """**无层级标记的长文**必须走滑窗兜底且过无损校验。
+
+    回归用例（2026-10-13 实测抓出的真缺陷）：该类文档（6465 字符的招聘公示，
+    正文是长名单、无「一、（一）」标记）触发了 `_fallback` 分支，而代码把
+    SlidingWindow 产出的 (start,end,path) **三元组**当成 Chunk 对象取属性，
+    抛 `'tuple' object has no attribute 'char_start'`——嵌入任务失败。
+    之前的用例只覆盖了「短文整篇成块」与「有层级的长文」，恰好漏掉这一格。
+    """
+    from fd_text_core.chunking import chunk_text, verify_lossless
+    from fd_text_core.verticals.gov import GovSectionStrategy
+
+    # 构造：无任何层级标记、远超 max_size 的长文（模拟名单类公示）
+    body = "".join(f"姓名{i}，拟聘岗位{i}。\n" for i in range(400))
+    assert len(body) > 1500 and not any(
+        ch in body for ch in ("一、", "（一）", "第一条")
+    )
+    st = GovSectionStrategy()
+    chunks = chunk_text(body, st)
+    assert len(chunks) > 1, "超长无层级文本必须被切成多块"
+    ok, detail = verify_lossless(body, chunks)
+    assert ok, f"滑窗兜底路径的无损还原失败：{detail}"
+    assert all(c.section_path is None for c in chunks), "无层级文不应编造层级路径"
+
+
 def test_facets_and_presets_declared():
     """facet 词表与预设包齐备（四件配置的第三、四件）。"""
     from fd_text_core.verticals.gov import FACETS, PRESETS
