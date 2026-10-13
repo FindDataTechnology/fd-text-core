@@ -3,82 +3,82 @@
   "_provenance": {
     "built_at": "2026-10-13",
     "corpus": "fd_text / domain=gov",
-    "corpus_size": 209,
-    "how_targets_chosen": "目标文档的文号在库内唯一（无同号文档），保证「命中即正确」可判定；id 为库内 corpus_documents.id",
+    "corpus_size": 212,
+    "how_targets_chosen": "目标文档的文号在库内唯一（无同号文档），保证「命中即正确」可判定；id 为库内 corpus_documents.id（2026-10-13 清库重摄取后的 id）",
     "note": "标注是「期望命中」而非「唯一正确」——公文间大量互相引用，其它文档也可能合理地含该查询词。故指标是 hit@k（目标是否进前 k），不是精确率。"
   },
   "queries": [
     {
       "q": "自然资办函〔2026〕1567号",
       "intent": "by_number",
-      "expect_doc_id": 26451,
+      "expect_doc_id": 26659,
       "why": "文号精查：文号在站点元数据表里、正文不出现（实测该类占 35/126）"
     },
     {
       "q": "自然资发〔2026〕135号",
       "intent": "by_number",
-      "expect_doc_id": 26457,
+      "expect_doc_id": 26665,
       "why": "文号精查：联合发文（自然资源部+国家林业和草原局）"
     },
     {
       "q": "自然资办函〔2026〕1564号",
       "intent": "by_number",
-      "expect_doc_id": 26459,
-      "why": "文号精查：正文不含文号（采集侧已把文号拼进检索头）"
+      "expect_doc_id": 26667,
+      "why": "文号精查：正文不含文号（靠检索头进入索引面）"
     },
     {
       "q": "自然资函〔2026〕593号",
       "intent": "by_number",
-      "expect_doc_id": 26463,
+      "expect_doc_id": 26671,
       "why": "文号精查：该篇正文含文号（对照组）"
     },
     {
       "q": "海洋资源保护与利用突出贡献奖评选表彰",
       "intent": "by_issuer_type",
-      "expect_doc_id": 26463,
+      "expect_doc_id": 26671,
       "why": "主题检索：自然资源部通知"
     },
     {
       "q": "地质灾害成功避险案例通报表扬",
       "intent": "by_issuer_type",
-      "expect_doc_id": 26459,
+      "expect_doc_id": 26667,
       "why": "主题检索：自然资源部办公厅通报类"
     },
     {
       "q": "商品住房销售制度完善",
       "intent": "by_issuer_type",
-      "expect_doc_id": 26487,
+      "expect_doc_id": 26695,
       "why": "主题检索：三部门联合发文（住房城乡建设部+自然资源部+金融监管总局）"
     },
     {
       "q": "全国地质灾害防治十五五实施方案",
       "intent": "timeline",
-      "expect_doc_id": 26495,
+      "expect_doc_id": 26703,
       "why": "政策沿革：专项规划类公文"
     },
     {
       "q": "实景三维数据赋能高质量发展典型案例征集",
       "intent": "timeline",
-      "expect_doc_id": 26494,
+      "expect_doc_id": 26702,
       "why": "政策沿革：数据要素类征集通知"
     },
     {
       "q": "盘活存量土地和低效用地典型案例",
       "intent": "similar",
-      "expect_doc_id": 26451,
+      "expect_doc_id": 26659,
       "why": "相似段落：给一段业务描述找对应公文"
     },
     {
       "q": "服务业优质高效发展支持政策",
       "intent": "similar",
-      "expect_doc_id": 26457,
+      "expect_doc_id": 26665,
       "why": "相似段落：政策主题语义检索"
     },
     {
       "q": "记账式附息国债第二次续发行承销团成员投标",
       "intent": "similar",
-      "expect_doc_id": 26457,
-      "why": "相似段落：跨部委语义检索（该主题实际属财政部，用自然语言描述，不指定机关）"
+      "expect_doc_id": 26734,
+      "why": "相似段落：跨部委语义检索（该主题属财政部，用自然语言描述不指定机关）"
     }
   ]
 }
