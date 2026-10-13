@@ -105,9 +105,10 @@ def test_mof_notice_doc_number_from_body():
 
 
 def test_mof_notice_issuer_from_closing():
-    """发布机构从落款行兜底识别。"""
+    """发布机构从落款行兜底识别，并归一到主体机关（原值留 issuer_raw）。"""
     d = _parse("mof_treasury_notice_2026.html")
-    assert d.issuer == "财政部办公厅"
+    assert d.issuer == "财政部", "应归一到主体机关（facet 词表可用）"
+    assert d.issuer_raw == "财政部办公厅", "原值必须留档可追溯"
 
 
 def test_mof_notice_sections_hierarchical():
@@ -199,7 +200,33 @@ def test_ndrc_title_decoration_stripped():
     d = _parse("ndrc_notice_cms_2026.html")
     assert d.title == "关于印发浙江高质量发展建设共同富裕示范区经验做法(第三批)的通知"
     assert d.doc_number == "发改办就业〔2026〕610号"
-    assert d.issuer == "国家发展改革委办公厅"
+    assert d.issuer == "国家发展改革委", "内部机构（办公厅）应归到主体机关"
+    assert d.issuer_raw == "国家发展改革委办公厅"
+
+
+def test_issuer_normalization_covers_real_variants():
+    """发布机构归一必须覆盖实测的真实形态（209 篇语料里出现 51 种原始写法）。
+
+    不归一的后果：按机关过滤会漏掉大半语料，或词表被迫列 51 个值。
+    这些样例逐条取自实测分布。
+    """
+    from fd_text_core.verticals.gov.parser import _normalize_issuer
+
+    cases = [
+        ("财政部办公厅", "财政部"),
+        ("财政部会计司", "财政部"),
+        ("财政部债务管理司", "财政部"),
+        ("国家发展改革委就业收入分配和消费司", "国家发展改革委"),
+        ("国家发展改革委发展战略和规划司", "国家发展改革委"),
+        ("国 家 能 源 局", "国家能源局"),        # 字间空格（实测形态）
+        ("税\u2003务\u2003总\u2003局", "税务总局"),  # 全角空格
+        ("自然资源部", "自然资源部"),              # 已是主体机关：原样
+        ("部委联合发文", "部委联合发文"),           # 站点原值非机关名：如实保留
+    ]
+    for raw, want in cases:
+        assert _normalize_issuer(raw) == want, f"{raw!r} 应归一到 {want!r}"
+    assert _normalize_issuer(None) is None
+    assert _normalize_issuer("   ") is None
 
 
 def test_order_doc_number_and_type():

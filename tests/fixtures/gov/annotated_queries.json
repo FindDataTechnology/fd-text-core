@@ -1,0 +1,84 @@
+{
+  "_comment": "公文垂域标注查询集（spec gov-documents-vertical 任务 5.1）。每条查询标注 expect_doc_id（应命中的文档 id，取自库内实况）与意图类型；跑分脚本 scripts/eval_gov_queries.py。",
+  "_provenance": {
+    "built_at": "2026-10-13",
+    "corpus": "fd_text / domain=gov",
+    "corpus_size": 209,
+    "how_targets_chosen": "目标文档的文号在库内唯一（无同号文档），保证「命中即正确」可判定；id 为库内 corpus_documents.id",
+    "note": "标注是「期望命中」而非「唯一正确」——公文间大量互相引用，其它文档也可能合理地含该查询词。故指标是 hit@k（目标是否进前 k），不是精确率。"
+  },
+  "queries": [
+    {
+      "q": "自然资办函〔2026〕1567号",
+      "intent": "by_number",
+      "expect_doc_id": 26451,
+      "why": "文号精查：文号在站点元数据表里、正文不出现（实测该类占 35/126）"
+    },
+    {
+      "q": "自然资发〔2026〕135号",
+      "intent": "by_number",
+      "expect_doc_id": 26457,
+      "why": "文号精查：联合发文（自然资源部+国家林业和草原局）"
+    },
+    {
+      "q": "自然资办函〔2026〕1564号",
+      "intent": "by_number",
+      "expect_doc_id": 26459,
+      "why": "文号精查：正文不含文号（采集侧已把文号拼进检索头）"
+    },
+    {
+      "q": "自然资函〔2026〕593号",
+      "intent": "by_number",
+      "expect_doc_id": 26463,
+      "why": "文号精查：该篇正文含文号（对照组）"
+    },
+    {
+      "q": "海洋资源保护与利用突出贡献奖评选表彰",
+      "intent": "by_issuer_type",
+      "expect_doc_id": 26463,
+      "why": "主题检索：自然资源部通知"
+    },
+    {
+      "q": "地质灾害成功避险案例通报表扬",
+      "intent": "by_issuer_type",
+      "expect_doc_id": 26459,
+      "why": "主题检索：自然资源部办公厅通报类"
+    },
+    {
+      "q": "商品住房销售制度完善",
+      "intent": "by_issuer_type",
+      "expect_doc_id": 26487,
+      "why": "主题检索：三部门联合发文（住房城乡建设部+自然资源部+金融监管总局）"
+    },
+    {
+      "q": "全国地质灾害防治十五五实施方案",
+      "intent": "timeline",
+      "expect_doc_id": 26495,
+      "why": "政策沿革：专项规划类公文"
+    },
+    {
+      "q": "实景三维数据赋能高质量发展典型案例征集",
+      "intent": "timeline",
+      "expect_doc_id": 26494,
+      "why": "政策沿革：数据要素类征集通知"
+    },
+    {
+      "q": "盘活存量土地和低效用地典型案例",
+      "intent": "similar",
+      "expect_doc_id": 26451,
+      "why": "相似段落：给一段业务描述找对应公文"
+    },
+    {
+      "q": "服务业优质高效发展支持政策",
+      "intent": "similar",
+      "expect_doc_id": 26457,
+      "why": "相似段落：政策主题语义检索"
+    },
+    {
+      "q": "记账式附息国债第二次续发行承销团成员投标",
+      "intent": "similar",
+      "expect_doc_id": 26457,
+      "why": "相似段落：跨部委语义检索（该主题实际属财政部，用自然语言描述，不指定机关）"
+    }
+  ]
+}

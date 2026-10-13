@@ -164,6 +164,7 @@ class GovDoc:
     cited_docs: list[str] = field(default_factory=list)
     source_note: str = ""
     site_date: str | None = None  # 站点元数据表日期；与落款不一致时保留以便追溯
+    issuer_raw: str | None = None  # 归一前的原始机关名（可追溯，不参与 facet 过滤）
 
     def section_texts(self) -> list[tuple[str, str]]:
         """切块策略消费的形态：[(层级路径, 文本)]（照剧本 parser 的契约）。"""
@@ -318,6 +319,35 @@ def _closing_date(body: str) -> str | None:
     return hits[-1] if hits else None
 
 
+def _normalize_issuer(raw: str | None) -> str | None:
+    """发布机构归一到 facet 词表可用的机关名。
+
+    为什么必须归一（实测 209 篇的真实分布）：原始值有 51 种形态，同一条目
+    在不同页面写作「财政部」「财 政 部」（字间全角空格）、「财政部办公厅」
+    「财政部会计司」「财政部债务管理司」——若不归一，按机关过滤会漏掉大半
+    语料，而 facet 词表要么被迫列 51 个值（且每次采集都要改词表）要么形同虚设。
+
+    归一规则（只做**可逆的信息保留**：原文另存 metadata.issuer_raw）：
+      · 去字间空白（实测有「国 家 能 源 局」「税　务　总　局」）
+      · 剥内部机构后缀（办公厅/办公室/各司/各处/各局/中心）→ 归到主体机关
+      · 「部委联合发文」这类非机关值如实保留（站点原值，不臆造机关名）
+    """
+    if not raw:
+        return None
+    s = re.sub(r"[\s\u3000\xa0]+", "", raw).strip()
+    if not s:
+        return None
+    # 剥内部机构后缀：财政部办公厅 -> 财政部；国家发展改革委就业收入分配和消费司 -> 国家发展改革委
+    m = re.match(
+        r"^(.+?(?:部|委|委员会|总局|总署|署|局|厅|政府|行|院|会|社|集团|公司))"
+        r"(?:办公厅|办公室|党组|[\u4e00-\u9fff]{1,12}?(?:司|局|处|中心|部|办))?$",
+        s,
+    )
+    if m:
+        return m.group(1)
+    return s
+
+
 def _issuer_from_title(title: str | None) -> str | None:
     """从「中华人民共和国财政部令第116号」这类标题前缀取发布机构。
 
@@ -466,6 +496,10 @@ def parse_gov_doc(html: str) -> GovDoc:
             if _ORG_SUFFIX.search(line) and len(line) <= 30:
                 doc.issuer = line.strip()
                 break
+    # 发布机构归一：原值留档 issuer_raw（可追溯），issuer 归到 facet 词表可用的机关名。
+    # 不归一则按机关过滤会漏掉大半语料（实测 51 种原始形态）。
+    doc.issuer_raw = doc.issuer
+    doc.issuer = _normalize_issuer(doc.issuer)
 
     # 引用文号：正文内出现的其它公文文号（去重、排除自身）
     seen = set()
