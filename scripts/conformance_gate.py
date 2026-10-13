@@ -329,12 +329,63 @@ def _index_explained(idx_name: str, declared: set[str]) -> bool:
 
 
 # ---------- 4. schema 漂移 ----------
+def _declared_table_names() -> set[str]:
+    """迁移文件中声明过的全部表名（静态解析，含 DO $$ 块与 f-string 分区名）。
+
+    为什么从迁移链推导而不是硬编码清单：硬编码清单**每加一个垂域分区都要改
+    质量门**，漏改的表现是「门报库内表多余（疑似手工建表）」——把正常的分区
+    迁移误判成漂移（本次接入 gov 时实测踩到：corpus_chunks_gov 被判多余）。
+    门的职责是「库与迁移链是否一致」，故两侧都该从迁移链推导。
+
+    解析面覆盖三种写法（正则 DOTALL 以容忍 DO $$ 块内的缩进换行）：
+      · 直接 `CREATE TABLE [IF NOT EXISTS] name`
+      · `DO $$ ... CREATE TABLE name PARTITION OF ... $$`（分区迁移的标准写法）
+      · `CREATE TABLE corpus_chunks_{dom}` + `INITIAL_DOMAINS = ("papers", ...)`
+        （0001 用 f-string 批量建初始分区，静态解析必须展开该循环）
+    另补 alembic 自建的版本表：它不由迁移文件创建，但库内必有。
+    """
+    versions = REPO / "fd_text_core" / "migrations" / "versions"
+    names: set[str] = {"alembic_version"}  # alembic 自建，不在迁移文件里
+    if not versions.is_dir():
+        return names
+    for f in versions.glob("*.py"):
+        text = f.read_text()
+        for m in re.finditer(
+            r'CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?["\']?([A-Za-z_]\w*)',
+            text,
+            re.IGNORECASE | re.DOTALL,
+        ):
+            names.add(m.group(1))
+        # f-string 模板 + 域元组：展开 `for dom in INITIAL_DOMAINS:` 这类批量分区声明。
+        # 两步走：先由 f-string 里的 {var} 找到所属循环 `for <var> in <TUPLE>:`，
+        # 再展开该元组。直接拿 {var} 当元组名找是错的——{dom} 是循环变量，
+        # 元组名在 `for ... in INITIAL_DOMAINS` 里（实测踩到：漏展开 papers 分区）。
+        for m in re.finditer(
+            r'CREATE\s+TABLE\s+["\']?([A-Za-z_]+_)\{(\w+)\}',
+            text,
+            re.IGNORECASE | re.DOTALL,
+        ):
+            prefix, var = m.group(1), m.group(2)
+            loop = re.search(rf'for\s+{var}\s+in\s+([A-Za-z_]\w*)\s*:', text)
+            if not loop:
+                continue
+            tup = re.search(rf'{loop.group(1)}\s*=\s*\(([^)]*)\)', text)
+            if not tup:
+                continue
+            for item in re.findall(r'["\']([^"\']+)["\']', tup.group(1)):
+                names.add(f"{prefix}{item}")
+    # 清掉未展开的模板名残留（形如 `corpus_chunks_`）——它不是真实表名，
+    # 留着会让「多余表」判定漏报一个真漂移。
+    return {n for n in names if not n.endswith("_")}
+
+
 def check_schema_drift() -> None:
-    """库内对象 vs 迁移链应建对象：多余对象=库外手工改动（漂移违规）。"""
-    expected = {
-        "corpus_documents", "corpus_chunks", "corpus_chunks_papers",
-        "corpus_chunks_screenplay", "embed_tasks", "anchor_embedding", "alembic_version",
-    }
+    """库内对象 vs 迁移链应建对象：多余对象=库外手工改动（漂移违规）。
+
+    期望表集从迁移链推导（见 `_declared_table_names`），故加垂域分区只需加迁移，
+    不必再改本门——否则门会成为「每接一个垂域就要改一次」的易漏点。
+    """
+    expected = _declared_table_names()
     url = os.environ.get("FDTEXT_DATABASE_URL", "")
     if not url:
         skip("schema 漂移", "FDTEXT_DATABASE_URL")
