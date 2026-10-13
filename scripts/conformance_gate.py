@@ -89,7 +89,9 @@ def _print_result(section: str) -> None:
         else:
             print(f"  {name}: {status}")
         return
-    hint = HINTS.get(section, ("（见 GATE 文档）", ""))
+    hint = HINTS.get(section)
+    if hint is None:  # 带垂域后缀的检查项名（如 检索评测[gov]）按前缀回查
+        hint = HINTS.get(section.split("[", 1)[0], ("（见 GATE 文档）", ""))
     print(f"  {section}: SKIPPED（缺 {hint[0]}）")
 
 
@@ -487,43 +489,46 @@ def check_retrieval_eval(domain: str | None, k: int = 10) -> None:
     """
     if not domain:
         return  # 未开启：不出现在结果里（保持既有七项的行为完全不变）
+    # 检查项名带垂域：--eval-all 会每域调用一次，同名会让结果登记与打印互相覆盖
+    # （实测：三次调用都打印第一域的行、摘要里同名三次）。
+    section = f"检索评测[{domain}]"
     try:
         from fd_text_core.eval import DatasetError, load_dataset
         from fd_text_core.eval import runner, store
     except Exception as exc:  # eval 包不可导入（异常安装）：如实报 FAIL
-        v("检索评测", f"评测模块不可导入：{type(exc).__name__}: {exc}")
-        rec("检索评测", "FAIL", f"导入异常：{type(exc).__name__}")
+        v(section, f"评测模块不可导入：{type(exc).__name__}: {exc}")
+        rec(section, "FAIL", f"导入异常：{type(exc).__name__}")
         return
 
     try:
         ds = load_dataset(domain)
     except DatasetError as exc:
-        v("检索评测", f"垂域 {domain} 标注集不可用：{exc}")
-        skip("检索评测", f"垂域 {domain} 的标注集（见上方说明）")
+        v(section, f"垂域 {domain} 标注集不可用：{exc}")
+        skip(section, f"垂域 {domain} 的标注集（见上方说明）")
         return
 
     from fd_text_core.embedding import embedder_from_env
 
     emb = embedder_from_env()
     if emb is None:
-        skip("检索评测", "FDTEXT_EMBEDDING_API_BASE + FDTEXT_EMBEDDING_API_KEY（向量通道需要）")
+        skip(section, "FDTEXT_EMBEDDING_API_BASE + FDTEXT_EMBEDDING_API_KEY（向量通道需要）")
         return
 
     try:
         rep = runner.run_eval(ds, k=k, embedder=emb, check_expects=store.check_expects_exist)
     except Exception as exc:
-        v("检索评测", f"跑分异常：{type(exc).__name__}: {exc}")
-        rec("检索评测", "FAIL", f"跑分异常：{type(exc).__name__}")
+        v(section, f"跑分异常：{type(exc).__name__}: {exc}")
+        rec(section, "FAIL", f"跑分异常：{type(exc).__name__}")
         return
 
     if rep.missing_expects:
-        v("检索评测",
+        v(section,
           f"标注集有 {len(rep.missing_expects)} 条期望命中文档在库内缺失"
           "｜修复=更新标注集（语料重建会使旧 id 失效）")
     if rep.degraded:
         # 向量通道降级 -> 验收线不可判定：如实 SKIPPED 而非给通过判定
-        v("检索评测", f"向量通道降级：{rep.degraded}")
-        skip("检索评测", "可用的嵌入通道（当前降级，验收线不可判定）")
+        v(section, f"向量通道降级：{rep.degraded}")
+        skip(section, "可用的嵌入通道（当前降级，验收线不可判定）")
         return
 
     verdict = rep.hybrid_not_worse
@@ -533,12 +538,12 @@ def check_retrieval_eval(domain: str | None, k: int = 10) -> None:
     detail = (f"{domain} k={k}：hybrid {hyb.get('hit@k')}/MRR {hyb.get('mrr')} vs "
               f"keyword {kw.get('hit@k')}/{kw.get('mrr')} vs vector {vec.get('hit@k')}/{vec.get('mrr')}")
     if verdict and not rep.missing_expects:
-        rec("检索评测", "PASS", detail)
+        rec(section, "PASS", detail)
     else:
         if not verdict:
-            v("检索评测", f"混合通道未达验收线（应不低于任一单通道）：{detail}")
-        rec("检索评测", "FAIL", detail)
-    _print_result_with_detail("检索评测", detail)
+            v(section, f"混合通道未达验收线（应不低于任一单通道）：{detail}")
+        rec(section, "FAIL", detail)
+    _print_result_with_detail(section, detail)
 
 
 # ---------- 6. 核心外部依赖 ----------
@@ -707,6 +712,8 @@ def cli() -> int:
         print("\n—— 未覆盖清单（本环境未实跑，不得以任何形式视为通过）——")
         for n in skipped:
             missing, how = HINTS.get(n, ("未知", "见 GATE 文档"))
+            if n not in HINTS:  # 带垂域后缀的检查项名（如 检索评测[gov]）按前缀回查
+                missing, how = HINTS.get(n.split("[", 1)[0], (missing, how))
             # 优先用本次实登记的原因：静态 HINTS 是「该项一般缺什么」，而本次可能是
             # 另一种缺法（如评测项开了 --eval-domain 却缺嵌入凭据）——此时报
             # 「缺 --eval-domain」会把人引向错误的修复方向（实测踩到）。

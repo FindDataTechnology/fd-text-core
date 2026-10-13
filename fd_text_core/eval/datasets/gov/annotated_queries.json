@@ -1,5 +1,5 @@
 {
-  "_comment": "公文垂域标注查询集（spec gov-documents-vertical 任务 5.1）。每条查询标注 expect_doc_id（应命中的文档 id，取自库内实况）与意图类型；跑分脚本 scripts/eval_gov_queries.py。",
+  "_comment": "公文垂域标注查询集（spec gov-documents-vertical 任务 5.1）。每条查询标注 expect_doc_id（应命中的文档 id，取自库内实况）与意图类型；跑分=scripts/eval_retrieval.py --domain gov。",
   "_provenance": {
     "built_at": "2026-10-13",
     "corpus": "fd_text / domain=gov",
