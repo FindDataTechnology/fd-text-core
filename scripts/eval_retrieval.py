@@ -41,11 +41,20 @@ def _print_report(rep, *, show_rows: bool = True) -> None:
         s = rep.summary.get(ch)
         if not s:
             continue
-        print(f"  {ch:8s} hit@{rep.k}: {s['hit@k']:>7s}   MRR={s['mrr']}")
+        print(f"  {ch:8s} hit@{rep.k}: {s['hit@k']:>7s}   MRR={s['mrr']:<7} nDCG={s.get('ndcg')}")
     if rep.degraded:
         print(f"  降级：{rep.degraded}")
+    if rep.saturated:
+        # 饱和不是失败：回归守门集就该饱和（目标必须居首）。此处如实标注，
+        # 防止把「数字好看」当成「度量有效」——重排收益请用难题集。
+        print("  ⚠ 本集已饱和（MRR 上限）：对重排类改进无区分度；"
+              "重排收益请用难题集（--variant hard）")
 
-    # spec 的验收线：混合通道不低于任一单通道
+    # spec 的验收线：混合通道不低于任一单通道。
+    # 难题集（hard）不适用该线：它在此暴露的是「RRF 对本集单通道强项有损」
+    # 这一事实（实测 hybrid 0.9352 < vector 1.0——向量在本集很强，融合被
+    # 关键词通道平均拖低）。该线是守门集（default）的准入判据；难题集是
+    # 改进度量面，如实呈报数字即可，不以其判 FAIL。
     line = rep.hybrid_not_worse
     if line is None:
         print("  混合通道判定：不可判定（向量通道降级）")
@@ -55,7 +64,11 @@ def _print_report(rep, *, show_rows: bool = True) -> None:
         hyb = rep.summary.get("hybrid", {})
         print(f"  混合 vs 单通道：命中 {hyb.get('hits')} vs keyword {kw.get('hits')} / "
               f"vector {vec.get('hits')}；MRR {hyb.get('mrr')} vs {kw.get('mrr')} / {vec.get('mrr')}")
-        print(f"  验收线（混合不低于任一单通道）：{'PASS' if line else 'FAIL'}")
+        if rep.variant == "hard":
+            verdict_txt = "混合不劣" if line else "⚠ 融合对单通道强项有损（难题集参考值，非验收线）"
+            print(f"  混合 vs 单通道（难题集，非验收判据）：{verdict_txt}")
+        else:
+            print(f"  验收线（混合不低于任一单通道）：{'PASS' if line else 'FAIL'}")
 
     if rep.by_intent:
         print("  按意图（hybrid 命中）：")
@@ -65,9 +78,11 @@ def _print_report(rep, *, show_rows: bool = True) -> None:
     if show_rows:
         print("  逐条（rank=None 表示未进前 k）：")
         for r in rep.rows:
-            print(f"    [{r['intent']:14s}] {r['q'][:30]:32s} "
+            g = "G" if r.get("graded") else " "
+            print(f"    [{r['intent']:14s}]{g} {r['q'][:30]:32s} "
                   f"kw={str(r.get('keyword')):>4s} vec={str(r.get('vector')):>4s} "
-                  f"hyb={str(r.get('hybrid')):>4s}")
+                  f"hyb={str(r.get('hybrid')):>4s}  "
+                  f"nDCG kw={r.get('keyword_ndcg')} hyb={r.get('hybrid_ndcg')}")
 
 
 def main() -> int:
@@ -80,6 +95,8 @@ def main() -> int:
                     help="要跑的通道，逗号分隔（如 keyword 可用于快速回归）")
     ap.add_argument("--store", action="store_true", help="结果写入 eval_runs 并判跨次回归")
     ap.add_argument("--json", default="", help="把完整结果写到该路径")
+    ap.add_argument("--variant", default="default",
+                    help="标注集变体：default=回归守门集 / hard=分级难题集")
     ap.add_argument("--no-rows", action="store_true", help="不打印逐条明细")
     ap.add_argument("--no-embed", action="store_true",
                     help="不加载嵌入器（仅 keyword 通道时用；避免无嵌入凭据时按降级跑）")
@@ -102,7 +119,7 @@ def main() -> int:
                   file=sys.stderr)
 
     if args.all:
-        domains = list_datasets()
+        domains = list_datasets(args.variant)
         if not domains:
             print("error: 包内没有任何标注集", file=sys.stderr)
             return 2
@@ -113,7 +130,7 @@ def main() -> int:
     exit_code = 0
     for dom in domains:
         try:
-            ds = load_dataset(dom)
+            ds = load_dataset(dom, variant=args.variant)
         except DatasetError as exc:
             print(f"error: {exc}", file=sys.stderr)
             exit_code = 2
@@ -126,7 +143,7 @@ def main() -> int:
         if args.store:
             try:
                 row_id = store.store_run(rep)
-                prev = store.latest_previous(dom, exclude_id=row_id)
+                prev = store.latest_previous(rep, exclude_id=row_id)
                 cmp_result = runner.compare_with_previous(rep, prev)
                 out["stored_id"] = row_id
                 out["comparison"] = cmp_result

@@ -250,3 +250,119 @@ def test_eval_module_has_no_llm_dependency():
     src = (REPO / "fd_text_core" / "eval" / "runner.py").read_text(encoding="utf-8")
     for banned in ("deepeval", "openai", "anthropic", "litellm", "crewai"):
         assert banned not in src, f"评测模块引入了 {banned}：超出本 change 的边界"
+
+
+# ---------- 分级相关性 + nDCG（change eval-graded-harder-set） ----------
+
+from fd_text_core.eval.dataset import Grade, Query  # noqa: E402
+from fd_text_core.eval.runner import ndcg_at_k  # noqa: E402
+
+
+def test_ndcg_ideal_order_is_one():
+    """理想序（grade2 打头）nDCG=1.0。"""
+    grades = (Grade(1, 2, "所求"), Grade(2, 1, "近邻"))
+    assert ndcg_at_k([1, 2, 99], grades, k=10) == 1.0
+
+
+def test_ndcg_penalizes_grade1_ahead_of_grade2():
+    """近邻（grade1）被排到所求（grade2）之前必须扣分——这正是重排收益面。
+
+    hit@k/MRR 对此完全无感（它们只看 grade2 是否出现），nDCG 是唯一能看见
+    「排得不好」的指标（本 change 的立项理由）。
+    """
+    grades = (Grade(1, 2, "所求"), Grade(2, 1, "近邻"))
+    ideal = ndcg_at_k([1, 2], grades, k=10)
+    degraded = ndcg_at_k([2, 1], grades, k=10)
+    assert degraded < ideal, "grade1 排前未被扣分：nDCG 对排序不敏感，度量无效"
+    assert 0.0 < degraded < 1.0
+
+
+def test_ndcg_missing_expected_is_zero():
+    grades = (Grade(1, 2, "所求"),)
+    assert ndcg_at_k([7, 8, 9], grades, k=10) == 0.0
+
+
+def test_ndcg_never_exceeds_one_with_chunk_duplicates():
+    """同一文档多切块进前 k 时不得重复计增益。
+
+    实现期实测抓到的真错：不去重时 gov hybrid 报 nDCG=2.1005。
+    nDCG 的取值域 [0,1] 是契约，超界即算错——本用例锁死该回归。
+    """
+    grades = (Grade(1, 2, "所求"),)
+    dup = ndcg_at_k([1, 1, 1, 1, 1], grades, k=10)
+    assert dup <= 1.0, f"重复切块把 nDCG 推过 1（={dup}）：增益被重复计入"
+    assert dup == 1.0  # 去重后目标在首位，应为理想
+
+
+def test_binary_query_equivalent_to_single_grade2():
+    """二值形态在指标层等价于单条 grade=2（向后兼容的语义基础）。"""
+    q = Query(q="x", intent="t", why="w", expect_doc_id=42)
+    assert q.graded is False
+    assert q.max_grade_ids() == (42,)
+    assert q.grades() == (Grade(doc_id=42, grade=2, why="w"),)
+
+
+def test_graded_query_max_grade_ids_allows_ties():
+    q = Query(q="x", intent="t", why="", expect=(
+        Grade(1, 2, "a"), Grade(2, 2, "b"), Grade(3, 1, "邻居"),
+    ))
+    assert q.graded is True
+    assert set(q.max_grade_ids()) == {1, 2}  # 并列所求都算命中判据
+
+
+def test_graded_dataset_requires_grade2(tmp_path):
+    """缺 grade=2 的查询不可判，契约必须拒载。"""
+    import json as _json
+
+    from fd_text_core.eval.dataset import DatasetError, load_dataset
+
+    d = tmp_path / "gov"
+    d.mkdir()
+    (d / "annotated_queries_hard.json").write_text(_json.dumps({
+        "_provenance": {"how_targets_chosen": "口径", "judgment_strength": "medium"},
+        "queries": [
+            {"q": f"q{i}", "intent": "t", "why": "w",
+             "expect": [{"doc_id": i, "grade": 1, "why": "只有邻居没所求"}]}
+            for i in range(12)
+        ],
+    }, ensure_ascii=False), encoding="utf-8")
+
+    import fd_text_core.eval.dataset as dsmod
+
+    orig = dsmod.DATASETS_DIR
+    dsmod.DATASETS_DIR = tmp_path
+    try:
+        with pytest.raises(DatasetError, match="无 grade=2"):
+            load_dataset("gov", variant="hard")
+    finally:
+        dsmod.DATASETS_DIR = orig
+
+
+def test_variant_isolation_in_compare():
+    """跨变体不可比：守门集与难题集的数字不许混比。"""
+    from fd_text_core.eval.runner import EvalReport, compare_with_previous
+
+    base = dict(domain="gov", k=10, dataset_fingerprint="d", config_fingerprint="c",
+                judgment_strength="strong", how_targets_chosen="h", n_queries=12,
+                summary={"hybrid": {"hits": 12, "mrr": 1.0, "ndcg": 1.0}})
+    now = EvalReport(variant="hard", **base)
+    prev = {"dataset_fingerprint": "d", "config_fingerprint": "c", "k": 10,
+            "variant": "default", "hybrid_hits": 12, "hybrid_mrr": 1.0}
+    out = compare_with_previous(now, prev)
+    assert out["status"] == "not_comparable"
+    assert any("变体" in c for c in out["changes"])
+
+
+def test_saturated_detection():
+    """饱和检测：MRR 上限即标注无区分度；降级时不报饱和。"""
+    from fd_text_core.eval.runner import EvalReport
+
+    base = dict(domain="gov", k=10, dataset_fingerprint="d", config_fingerprint="c",
+                judgment_strength="strong", how_targets_chosen="h", n_queries=12)
+    sat = EvalReport(summary={"hybrid": {"hits": 12, "mrr": 1.0, "ndcg": 1.0}}, **base)
+    assert sat.saturated is True
+    unsat = EvalReport(summary={"hybrid": {"hits": 11, "mrr": 0.9, "ndcg": 0.9}}, **base)
+    assert unsat.saturated is False
+    deg = EvalReport(summary={"hybrid": {"hits": 12, "mrr": 1.0, "ndcg": 1.0}},
+                     degraded=["vector: x"], **base)
+    assert deg.saturated is False  # 降级时判定不可信

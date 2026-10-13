@@ -497,8 +497,12 @@ def vertical_commit_files(commits: list[str]) -> list[str]:
 
 
 # ---------- 7. 检索评测（可选第八项） ----------
-def check_retrieval_eval(domain: str | None, k: int = 10) -> None:
+def check_retrieval_eval(domain: str | None, k: int = 10, variant: str = "default") -> None:
     """检索评测：跑分器在标注集上的验收线（混合不低于任一单通道）。
+
+    验收线只对 default 变体（守门集）判定；hard 变体（分级难题集）按
+    度量面报告（nDCG 等），不以其判 FAIL——它是改进度量面而非准入面
+    （见 change eval-graded-harder-set）。
 
     **为什么默认关、必须显式开启**：本项比既有诸项重得多（N 条查询 × 3 通道，
     每条向量查询一次嵌入调用），把它默认塞进门会让每次 CI 都慢且需要嵌入凭据。
@@ -509,7 +513,7 @@ def check_retrieval_eval(domain: str | None, k: int = 10) -> None:
         return  # 未开启：不出现在结果里（保持既有七项的行为完全不变）
     # 检查项名带垂域：--eval-all 会每域调用一次，同名会让结果登记与打印互相覆盖
     # （实测：三次调用都打印第一域的行、摘要里同名三次）。
-    section = f"检索评测[{domain}]"
+    section = f"检索评测[{domain}]" if variant == "default" else f"检索评测[{domain}:{variant}]"
     try:
         from fd_text_core.eval import DatasetError, load_dataset
         from fd_text_core.eval import runner, store
@@ -519,7 +523,7 @@ def check_retrieval_eval(domain: str | None, k: int = 10) -> None:
         return
 
     try:
-        ds = load_dataset(domain)
+        ds = load_dataset(domain, variant=variant)
     except DatasetError as exc:
         v(section, f"垂域 {domain} 标注集不可用：{exc}")
         skip(section, f"垂域 {domain} 的标注集（见上方说明）")
@@ -547,6 +551,17 @@ def check_retrieval_eval(domain: str | None, k: int = 10) -> None:
         # 向量通道降级 -> 验收线不可判定：如实 SKIPPED 而非给通过判定
         v(section, f"向量通道降级：{rep.degraded}")
         skip(section, "可用的嵌入通道（当前降级，验收线不可判定）")
+        return
+
+    if variant != "default":
+        # 难题集：报告口径（nDCG 是主指标；验收线在该集上不适用，见函数 docstring）
+        hyb = rep.summary.get("hybrid", {})
+        kw = rep.summary.get("keyword", {})
+        vec = rep.summary.get("vector", {})
+        detail = (f"{domain}:{variant} k={k} nDCG hybrid {hyb.get('ndcg')} vs "
+                  f"keyword {kw.get('ndcg')} vs vector {vec.get('ndcg')}（度量面，非验收线）")
+        rec(section, "PASS" if not rep.missing_expects else "FAIL", detail)
+        _print_result_with_detail(section, detail)
         return
 
     verdict = rep.hybrid_not_worse
@@ -686,6 +701,8 @@ def cli() -> int:
                     help="开启检索评测检查项并指定垂域（默认关；--eval-all 则跑全部已交付标注集）")
     ap.add_argument("--eval-all", action="store_true",
                     help="开启检索评测并覆盖包内全部已交付标注集")
+    ap.add_argument("--eval-variant", default=os.environ.get("GATE_EVAL_VARIANT", "default"),
+                    help="评测标注集变体：default=守门集（判验收线）/ hard=分级难题集（度量面）")
     ap.add_argument("--strict", action="store_true",
                     help="严格模式：任一 SKIPPED 或 FAIL 均导致非零退出码（垂域验收唯一合法口径）")
     args = ap.parse_args()
@@ -712,13 +729,20 @@ def cli() -> int:
     if getattr(args, "eval_all", False):
         try:
             from fd_text_core.eval import list_datasets
-            for _d in list_datasets():
-                check_retrieval_eval(_d)
+            # 按变体枚举：难题集是按需交付的度量面（目前只有 gov），
+            # 无该变体的域不出现在结果里——不把「未交付」误报为失败。
+            _domains = list_datasets(args.eval_variant)
+            if not _domains:
+                skip(f"检索评测[{args.eval_variant}]",
+                     f"variant={args.eval_variant} 的标注集（包内无任何域交付）")
+            for _d in _domains:
+                check_retrieval_eval(_d, variant=args.eval_variant)
         except Exception as exc:
             v("检索评测", f"枚举标注集失败：{type(exc).__name__}: {exc}")
             rec("检索评测", "FAIL", f"枚举异常：{type(exc).__name__}")
     else:
-        check_retrieval_eval(getattr(args, "eval_domain", "") or None)
+        check_retrieval_eval(getattr(args, "eval_domain", "") or None,
+                             variant=args.eval_variant)
 
     passed = [n for n, s, _ in Results if s == "PASS"]
     failed = [n for n, s, _ in Results if s == "FAIL"]

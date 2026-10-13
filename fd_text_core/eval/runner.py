@@ -16,6 +16,51 @@ from .dataset import Dataset
 CHANNELS = ("keyword", "vector", "hybrid")
 
 
+def ndcg_at_k(ranked_ids: list[int], grades: tuple, k: int) -> float:
+    """nDCG@k（分级相关性）。
+
+    DCG  = Σ (2^g_i - 1) / log2(i + 1)，i 从 1 起；
+    IDCG = 标注等级降序铺满 k 的理想值；nDCG = DCG / IDCG。
+
+    **按 document_id 去重保首现**：检索返回切块（chunk），同一文档可有多个
+    切块进前 k；不去重则该文档的增益被重复计入，nDCG 会超过 1（实现期实测
+    抓到：gov hybrid 报 2.1005——nDCG 的取值域 [0,1] 是硬约束，超界即算错）。
+    文档的「排名」= 其任一相关切块的最优位次，与 hit/MRR 的判定口径一致。
+
+    为什么有它：MRR/hit@k 只看最高等级文档的位置，对「同簇近邻（grade=1）
+    排在所求（grade=2）之前」完全无感——而近邻挤占 log2 折损位正是重排类
+    改进的收益所在。二值标注（命中=grade2/未中=0）下 nDCG 是该尺度的退化，
+    与 hit 排序敏感版一致。
+
+    IDCG=0 只可能发生在标注不含任何相关文档时——契约强制每条至少一篇
+    grade=2，故此处防御性返回 0.0（宁可显 0 也不抛，指标层不制造中断）。
+    """
+    gmap = {g.doc_id: g.grade for g in grades}
+    seen: set[int] = set()
+    ranked_docs: list[int] = []
+    for did in ranked_ids:
+        if did not in seen:
+            seen.add(did)
+            ranked_docs.append(did)
+
+    dcg = 0.0
+    for i, did in enumerate(ranked_docs[:k], start=1):
+        g = gmap.get(did, 0)
+        if g:
+            dcg += (2**g - 1) / _log2(i + 1)
+    ideal = sorted((g.grade for g in grades), reverse=True)[:k]
+    idcg = sum((2**g - 1) / _log2(i + 1) for i, g in enumerate(ideal, start=1))
+    if idcg <= 0:
+        return 0.0
+    return dcg / idcg
+
+
+def _log2(x: float) -> float:
+    from math import log2
+
+    return log2(x)
+
+
 @dataclass
 class EvalReport:
     """一次跑分的完整结果。"""
@@ -27,11 +72,30 @@ class EvalReport:
     judgment_strength: str
     how_targets_chosen: str
     n_queries: int
-    summary: dict = field(default_factory=dict)  # channel -> {hits, mrr, hit@k}
+    summary: dict = field(default_factory=dict)  # channel -> {hits, mrr, ndcg, hit@k}
     by_intent: dict = field(default_factory=dict)
     rows: list = field(default_factory=list)
     degraded: list = field(default_factory=list)
     missing_expects: list = field(default_factory=list)
+    variant: str = "default"
+
+    @property
+    def saturated(self) -> bool:
+        """本集对重排类改进是否有区分度。
+
+        判据：全部查询的最高等级文档在三通道（至少 hybrid）皆居首位
+        ⇔ MRR 达到理论上限。此时集合对重排无区分度——如实标注，**但不判
+        FAIL**：回归守门集就该饱和（目标必须居首），把它标成失败会诱导人
+        为数字好看而弱化守门集。
+        """
+        if self.degraded:
+            return False
+        hyb = self.summary.get("hybrid", {})
+        return bool(
+            self.n_queries > 0
+            and hyb.get("hits", 0) == self.n_queries
+            and hyb.get("mrr", 0.0) >= 1.0
+        )
 
     @property
     def hybrid_not_worse(self) -> bool | None:
@@ -51,6 +115,7 @@ class EvalReport:
         return {
             "domain": self.domain,
             "k": self.k,
+            "variant": self.variant,
             "dataset_fingerprint": self.dataset_fingerprint,
             "config_fingerprint": self.config_fingerprint,
             "judgment_strength": self.judgment_strength,
@@ -62,6 +127,7 @@ class EvalReport:
             "degraded": self.degraded,
             "missing_expects": self.missing_expects,
             "hybrid_not_worse": self.hybrid_not_worse,
+            "saturated": self.saturated,
         }
 
 
@@ -126,28 +192,42 @@ def run_eval(
         how_targets_chosen=dataset.how_targets_chosen,
         n_queries=len(dataset.queries),
         missing_expects=(check_expects(dataset) if check_expects else []),
+        variant=dataset.variant,
     )
 
     rows: list[dict] = []
     for q in dataset.queries:
-        row: dict = {"q": q.q, "intent": q.intent, "expect": q.expect_doc_id}
+        top_ids = q.max_grade_ids()  # 最高等级（分级下可并列）
+        row: dict = {
+            "q": q.q,
+            "intent": q.intent,
+            # 二值形态保留原字段名（既有报告消费方的兼容面）
+            "expect": q.expect_doc_id,
+            "expect_ids": list(top_ids),
+            "graded": q.graded,
+        }
         for ch in channels:
             res = hybrid_search(dataset.domain, q.q, embedder=embedder, limit=k, channels=ch)
             for d in res.get("degraded") or []:
                 if d not in report.degraded:
                     report.degraded.append(d)
             ids = [x.get("document_id") for x in res["results"]]
-            row[ch] = ids.index(q.expect_doc_id) + 1 if q.expect_doc_id in ids else None
+            # 命中判据：任一最高等级文档进前 k；排名取其中最优者
+            ranks = [ids.index(t) + 1 for t in top_ids if t in ids]
+            row[ch] = min(ranks) if ranks else None
+            row[f"{ch}_ndcg"] = round(ndcg_at_k(ids, q.grades(), k), 4)
         rows.append(row)
     report.rows = rows
 
     summary: dict = {}
     for ch in channels:
         ranks = [r[ch] for r in rows if r.get(ch)]
+        ndcgs = [r[f"{ch}_ndcg"] for r in rows]
         summary[ch] = {
             "hits": len(ranks),
             "hit@k": f"{len(ranks)}/{len(rows)}",
             "mrr": round(sum(1.0 / r for r in ranks) / max(1, len(rows)), 4),
+            "ndcg": round(sum(ndcgs) / max(1, len(ndcgs)), 4),
         }
     report.summary = summary
 
@@ -162,10 +242,12 @@ def run_eval(
     return report
 
 
-def run_eval_all(*, k: int = 10, embedder: Embedder | None = None) -> list[EvalReport]:
+def run_eval_all(
+    *, k: int = 10, embedder: Embedder | None = None, variant: str = "default"
+) -> list[EvalReport]:
     from .dataset import load_all
 
-    return [run_eval(ds, k=k, embedder=embedder) for ds in load_all()]
+    return [run_eval(ds, k=k, embedder=embedder) for ds in load_all(variant=variant)]
 
 
 def compare_with_previous(report: EvalReport, previous: dict | None) -> dict:
@@ -188,6 +270,10 @@ def compare_with_previous(report: EvalReport, previous: dict | None) -> dict:
         )
     if previous.get("k") != report.k:
         changed.append(f"k 已变（{previous.get('k')} -> {report.k}）")
+    # 两个变体（守门集/难题集）不可互比：混比会让「换了评测面」伪装成趋势
+    prev_variant = previous.get("variant") or "default"
+    if prev_variant != report.variant:
+        changed.append(f"评测变体已变（{prev_variant} -> {report.variant}）")
     if changed:
         return {
             "status": "not_comparable",
@@ -206,6 +292,9 @@ def compare_with_previous(report: EvalReport, previous: dict | None) -> dict:
             )
         if now.get("mrr", 0.0) < prev_mrr:
             regressions.append(f"{ch}: MRR {prev_mrr} -> {now.get('mrr')}")
+        prev_ndcg = previous.get(f"{ch}_ndcg")
+        if prev_ndcg is not None and now.get("ndcg", 0.0) < float(prev_ndcg):
+            regressions.append(f"{ch}: nDCG {prev_ndcg} -> {now.get('ndcg')}")
     if regressions:
         return {"status": "regression", "message": "检出回归", "details": regressions}
     return {"status": "ok", "message": "与上次相比无回归"}
