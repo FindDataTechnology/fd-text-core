@@ -49,7 +49,6 @@ def test_harvest_parses_record_fields():
         "<categories>q-fin.CP cs.CE</categories>"
         "<abstract>We study attention mechanisms in markets.</abstract>"
     )
-    seen = []
     t = H.Throttler(sleep=lambda s: None)
 
     def fetcher(url, timeout=60):
