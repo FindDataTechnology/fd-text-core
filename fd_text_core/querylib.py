@@ -80,6 +80,9 @@ def keyword_search(domain: str, query: str, limit: int, facets: dict | None = No
         tq = cjk_tsquery(query, t2s=_t2s_enabled(domain))
         if not tq:
             return []
+        # 原串精确命中优先（ILIKE 对 CJK 与 LIKE 逐字节等价）：ts_rank_cd 按
+        # 覆盖密度打分，高频 bigram 的密度会压过完整文号/法条号只出现一次的
+        # 文档——精确串查询的目标被埋。该因子只改组内次序，不改召回集。
         sql = f"""
             SELECT c.id, c.document_id, c.chunk_no, c.chunk_text, c.char_start, c.char_end,
                    c.section_path, d.title, d.source, d.source_id, d.provenance,
@@ -87,11 +90,13 @@ def keyword_search(domain: str, query: str, limit: int, facets: dict | None = No
             FROM corpus_chunks c
             JOIN corpus_documents d ON d.id = c.document_id AND d.status='current'
             WHERE c.domain=%s AND c.tsv @@ to_tsquery('simple', %s){where}
-            ORDER BY kw_score DESC, c.document_id, c.chunk_no
+            ORDER BY (c.chunk_text ILIKE '%%' || %s || '%%') DESC,
+                     kw_score DESC, c.document_id, c.chunk_no
             LIMIT %s
         """
-        rows = fetch_all(sql, [tq, domain, tq] + params + [limit])
+        rows = fetch_all(sql, [tq, domain, tq, query] + params + [limit])
     else:
+        # ILIKE（大小写不敏感）与 plainto_tsquery 的大小写折叠语义对齐。
         sql = f"""
             SELECT c.id, c.document_id, c.chunk_no, c.chunk_text, c.char_start, c.char_end,
                    c.section_path, d.title, d.source, d.source_id, d.provenance,
@@ -99,11 +104,12 @@ def keyword_search(domain: str, query: str, limit: int, facets: dict | None = No
             FROM corpus_chunks c
             JOIN corpus_documents d ON d.id = c.document_id AND d.status='current'
             WHERE c.domain=%s AND c.tsv @@ plainto_tsquery(%s::regconfig, %s){where}
-            ORDER BY kw_score DESC, c.document_id, c.chunk_no
+            ORDER BY (c.chunk_text ILIKE '%%' || %s || '%%') DESC,
+                     kw_score DESC, c.document_id, c.chunk_no
             LIMIT %s
         """
         cfg = _tsv_config(domain)
-        rows = fetch_all(sql, [cfg, query, domain, cfg, query] + params + [limit])
+        rows = fetch_all(sql, [cfg, query, domain, cfg, query, query] + params + [limit])
     for r in rows:
         r["by"] = "keyword"
     return rows
@@ -147,6 +153,21 @@ def vector_search(
         r["by"] = "vector"
         r["score"] = r.pop("sim", None)
     return rows
+
+
+def _exact_first(rows: list[dict], query: str) -> list[dict]:
+    """融合后排序的「原串精确命中优先」（与关键词通道同一原则）。
+
+    为什么融合层也要：RRF 是名次算术，双通道在场的平庸候选（Σ 1/(k+r)）
+    会压过单通道第 1 的强证据候选——文号类查询实测（gov 1564）keyword 第 1、
+    vector 未命中，融合后掉出前 10。切块含完整查询原串是强于任何名次融合的
+    相关性证据，提到最前。大小写不敏感与非 CJK 分支的 ILIKE 语义对齐；
+    自然语言查询通常不含完整原串，本因子对其为空操作。
+    """
+    if not query.strip():
+        return rows
+    q = query.strip().lower()
+    return sorted(rows, key=lambda r: (0 if q in (r.get("chunk_text") or "").lower() else 1, -r["rrf"]))
 
 
 def rrf_fuse(channels: Iterable[list[dict]], k: int = RRF_K) -> list[dict]:
@@ -206,7 +227,12 @@ def hybrid_search(
             except UpstreamUnavailable as exc:
                 degraded.append(f"vector: {exc}")
 
-    results = rrf_fuse([kw_rows, vec_rows])[:lim]
+    fused = rrf_fuse([kw_rows, vec_rows])
+    if channels == "hybrid":
+        # 原串优先只作用于融合路径；keyword/vector 纯通道保持各自的本征排序
+        # （评测层的三通道对照才可比，且 vector 的语义序不被文本包含判定污染）。
+        fused = _exact_first(fused, query)
+    results = fused[:lim]
     for r in results:
         try:
             require_triplet(r.get("provenance"))

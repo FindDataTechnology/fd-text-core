@@ -442,7 +442,7 @@ def check_schema_drift() -> None:
 
 
 # ---------- 5. 垂域越界 ----------
-def check_vertical_boundary(changed: list[str] | None) -> None:
+def check_vertical_boundary(changed: list[str] | None, allow_core: bool = False) -> None:
     """垂域改动不得触碰引擎核心模块。
 
     口径说明：越界检查问的是「**垂域接入这个动作**是否改了引擎核心」。
@@ -450,6 +450,13 @@ def check_vertical_boundary(changed: list[str] | None) -> None:
     （如 text-cjk-tokenization 改 querylib）也算成越界——实测误报 6 项。
     故支持 `--vertical-commits` 精确指定垂域提交，只查这些提交的改动；
     未指定时退回区间 diff 并打印口径警告（宁可多报也别漏报，但要说清）。
+
+    `--allow-core-change`：验收对象本身是**引擎能力 change**（其正当内容就是
+    改核心，如 text-foundation-remediation 修 chunking/coldstore、
+    text-exact-match-ranking 修 querylib）时，越界检查转为**报告口径**——
+    核心改动如实列出但不判 FAIL。两个引擎级 change 实测都撞了这道语义墙
+    （前者当时靠只报非核心提交绕过），故固化为显式开关：绕过要留名，
+    不许静默。
     """
     if changed is None:
         skip("垂域越界", "--changed-base 或 --vertical-commits")
@@ -461,6 +468,17 @@ def check_vertical_boundary(changed: list[str] | None) -> None:
         return
     core_rel = {f"fd_text_core/{m}" for m in CORE_MODULES}
     offenders = [f for f in changed if f in core_rel]
+    if allow_core:
+        # 引擎能力 change：核心改动是正当内容，如实报告而非拦截。
+        core_touched = [f for f in changed if f in core_rel]
+        _print_result_with_detail(
+            "垂域越界",
+            f"{len(changed)} 个改动文件（--allow-core-change：引擎能力 change 口径，"
+            f"核心改动 {len(core_touched)} 个如实列报不拦截）",
+        )
+        for f in core_touched:
+            print(f"    · {f}")
+        return
     for f in offenders:
         v("垂域越界", f"{f} 是引擎核心模块，垂域 change 不得修改｜修复=先补引擎抽象再以配置接入")
     _print_result_with_detail("垂域越界", f"{len(changed)} 个改动文件")
@@ -661,6 +679,9 @@ def cli() -> int:
                     help="用于垂域越界检查的 git 基线（区间口径；多 change 并行时会误报，见 check_vertical_boundary）")
     ap.add_argument("--vertical-commits", default=os.environ.get("GATE_VERTICAL_COMMITS", ""),
                     help="垂域提交 sha（逗号分隔）——精确口径，只查这些提交是否触碰引擎核心")
+    ap.add_argument("--allow-core-change", action="store_true",
+                    help="引擎能力 change 口径：验收对象正当内容就是改引擎核心，"
+                         "越界检查转报告口径（核心改动如实列报，不判 FAIL）")
     ap.add_argument("--eval-domain", default=os.environ.get("GATE_EVAL_DOMAIN", ""),
                     help="开启检索评测检查项并指定垂域（默认关；--eval-all 则跑全部已交付标注集）")
     ap.add_argument("--eval-all", action="store_true",
@@ -685,7 +706,7 @@ def cli() -> int:
     check_anchor()
     check_schema_drift()
     check_corpus_reconcile()
-    check_vertical_boundary(boundary_files)
+    check_vertical_boundary(boundary_files, allow_core=args.allow_core_change)
     check_core_imports()
     # 第八项：检索评测（可选，默认关——见 check_retrieval_eval 的说明）
     if getattr(args, "eval_all", False):
