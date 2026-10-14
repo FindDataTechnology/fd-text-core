@@ -19,6 +19,10 @@ from .tokenize import cjk_tsquery
 from .verticals.registry import get as get_vertical
 
 RRF_K = int(os.environ.get("FDTEXT_RRF_K", "60"))
+# 融合通道权重（默认 = 实证点：向量侧 2.0，见 change fusion-weight-vector-tilt
+# 的 30 条对照实验）。调用时读环境变量（非导入时），使运行期可配、可测。
+RRF_W_KEYWORD_DEFAULT = "1.0"
+RRF_W_VEC_DEFAULT = "2.0"
 VECTOR_PREFETCH = int(os.environ.get("FDTEXT_VECTOR_PREFETCH", "50"))
 RERANK_HOOK: Callable | None = None  # 重排器接口位：callable(list[dict]) -> list[dict]
 
@@ -170,20 +174,35 @@ def _exact_first(rows: list[dict], query: str) -> list[dict]:
     return sorted(rows, key=lambda r: (0 if q in (r.get("chunk_text") or "").lower() else 1, -r["rrf"]))
 
 
-def rrf_fuse(channels: Iterable[list[dict]], k: int = RRF_K) -> list[dict]:
-    """倒数排名融合。同 id 跨通道合并，通道来源记入 matched_by。"""
+def rrf_fuse(
+    channels: Iterable[list[dict]],
+    k: int = RRF_K,
+    weights: Iterable[float] | None = None,
+) -> list[dict]:
+    """倒数排名融合。同 id 跨通道合并，通道来源记入 matched_by。
+
+    `weights` 与 `channels` 顺序对应；None 即全 1.0（与不加权逐位等价）。
+    **权重为什么存在**（难题集实证，change fusion-weight-vector-tilt）：
+    均匀权重下混合低于单通道向量（难题集 MRR 0.9352 vs 1.0——RRF 名次算术
+    被较弱的关键词通道平均拉低）。权重取值由两个标注集实测确定并入配置
+    指纹；无证据不得调整（spec 明文）。
+    """
+    ch_list = list(channels)
+    ws = [1.0] * len(ch_list) if weights is None else [float(w) for w in weights]
+    if len(ws) != len(ch_list):
+        raise ValueError(f"weights 长度 {len(ws)} 与通道数 {len(ch_list)} 不匹配")
     fused: dict[int, dict] = {}
-    for ch in channels:
+    for ch, w in zip(ch_list, ws):
         for rank, row in enumerate(ch, start=1):
             rid = row["id"]
             if rid in fused:
                 cur = fused[rid]
-                cur["rrf"] += 1.0 / (k + rank)
+                cur["rrf"] += w / (k + rank)
                 if row["by"] not in cur["matched_by"]:
                     cur["matched_by"].append(row["by"])
             else:
                 item = dict(row)
-                item["rrf"] = 1.0 / (k + rank)
+                item["rrf"] = w / (k + rank)
                 item["matched_by"] = [row["by"]]
                 item.pop("by", None)
                 item.pop("kw_score", None)
@@ -227,7 +246,13 @@ def hybrid_search(
             except UpstreamUnavailable as exc:
                 degraded.append(f"vector: {exc}")
 
-    fused = rrf_fuse([kw_rows, vec_rows])
+    fused = rrf_fuse(
+        [kw_rows, vec_rows],
+        weights=[
+            float(os.environ.get("FDTEXT_RRF_W_KEYWORD", RRF_W_KEYWORD_DEFAULT)),
+            float(os.environ.get("FDTEXT_RRF_W_VEC", RRF_W_VEC_DEFAULT)),
+        ],
+    )
     if channels == "hybrid":
         # 原串优先只作用于融合路径；keyword/vector 纯通道保持各自的本征排序
         # （评测层的三通道对照才可比，且 vector 的语义序不被文本包含判定污染）。

@@ -148,6 +148,10 @@ def compute_config_fingerprint(domain: str) -> str:
         f"embedding_dim={os.environ.get('FDTEXT_EMBEDDING_DIM', '1024')}",
         f"provider_only={os.environ.get('FDTEXT_EMBEDDING_PROVIDER_ONLY', '')}",
         f"rrf_k={os.environ.get('FDTEXT_RRF_K', '60')}",
+        # 融合权重入指纹：改权重必须与「检索退化」可区分（change
+        # fusion-weight-vector-tilt 的 D2——否则同一指纹下指标变了无法归因）。
+        f"rrf_w_keyword={os.environ.get('FDTEXT_RRF_W_KEYWORD', '1.0')}",
+        f"rrf_w_vec={os.environ.get('FDTEXT_RRF_W_VEC', '2.0')}",
     ]
     try:
         v = get(domain)

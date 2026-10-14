@@ -304,3 +304,48 @@ class TestPresets:
             raise AssertionError("预设不应绕过 facet 校验")
         except FacetError:
             pass
+
+
+# ---------- 融合权重（change fusion-weight-vector-tilt） ----------
+
+def test_rrf_weights_none_equals_explicit_ones():
+    """weights=None 与显式 [1.0,1.0] 逐位等价——默认语义不因加参而变。"""
+    a = [{"id": 1, "by": "keyword"}, {"id": 2, "by": "keyword"}]
+    b = [{"id": 2, "by": "vector"}, {"id": 3, "by": "vector"}]
+    base = rrf_fuse([a, b])
+    same = rrf_fuse([a, b], weights=[1.0, 1.0])
+    assert [r["id"] for r in base] == [r["id"] for r in same]
+    assert [r["rrf"] for r in base] == [r["rrf"] for r in same]
+
+
+def test_rrf_vector_weight_promotes_vector_only_candidate():
+    """提高向量侧权重使「仅向量命中且位次高」的候选前移——权重的机制本身。
+
+    构造：id=1 仅关键词第 1；id=2 仅向量第 1。均匀权重下两者 rrf 相同、
+    按 id 决胜（1 在前）；向量侧加权后 id=2 应前移。
+    """
+    a = [{"id": 1, "by": "keyword"}]
+    b = [{"id": 2, "by": "vector"}]
+    even = [r["id"] for r in rrf_fuse([a, b])]
+    assert even[0] == 1
+    tilted = [r["id"] for r in rrf_fuse([a, b], weights=[1.0, 2.0])]
+    assert tilted[0] == 2
+
+
+def test_rrf_weights_length_mismatch_raises():
+    """权重与通道数不匹配即报错——不静默忽略（配置错误要能被看见）。"""
+    import pytest as _pytest
+    a = [{"id": 1, "by": "keyword"}]
+    with _pytest.raises(ValueError, match="weights 长度"):
+        rrf_fuse([a], weights=[1.0, 2.0])
+
+
+def test_config_fingerprint_includes_weights(monkeypatch):
+    """改融合权重必须改指纹——否则「同一指纹下指标变了」无法归因。"""
+    from fd_text_core.eval.runner import compute_config_fingerprint
+
+    monkeypatch.delenv("FDTEXT_RRF_W_VEC", raising=False)
+    fp_default = compute_config_fingerprint("gov")
+    monkeypatch.setenv("FDTEXT_RRF_W_VEC", "4.0")
+    fp_changed = compute_config_fingerprint("gov")
+    assert fp_default != fp_changed
