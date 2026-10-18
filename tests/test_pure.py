@@ -349,3 +349,55 @@ def test_config_fingerprint_includes_weights(monkeypatch):
     monkeypatch.setenv("FDTEXT_RRF_W_VEC", "4.0")
     fp_changed = compute_config_fingerprint("gov")
     assert fp_default != fp_changed
+
+
+def test_tsv_config_falls_back_for_unregistered_domain(monkeypatch):
+    """未注册垂域不得抛 KeyError——读写两侧必须同构兜底。
+
+    回归对象：`querylib._tsv_config` 曾直接 `get_vertical(domain).tsv_config`，
+    垂域未注册即抛 KeyError，把质量门 `--eval-all` 打崩（该枚举按标注集目录
+    进行，不看注册表）。`embed_worker._tsv_config` 早有兜底，这是两侧分裂。
+    """
+    from fd_text_core.querylib import _tsv_config
+
+    monkeypatch.delenv("FDTEXT_TSV_CONFIG", raising=False)
+    assert _tsv_config("no-such-vertical") == "simple"
+    monkeypatch.setenv("FDTEXT_TSV_CONFIG", "zhparser")
+    assert _tsv_config("no-such-vertical") == "zhparser"
+    # 已注册垂域仍取垂域配置，不被环境变量覆盖
+    assert _tsv_config("papers") == "simple"
+
+
+def test_builtin_verticals_have_no_runtime_switch():
+    """工具面由注册表单一真源决定：内置域一律注册，不设环境开关。
+
+    回归对象：`FDTEXT_ENABLE_GOV` 曾让同一份代码在不同部署环境产生不同
+    tools/list，使 manifest 与实况静默不一致（change fix-text-core-gov-surface D1）。
+    """
+    assert {"papers", "screenplay", "gov"} <= set(list_verticals())
+
+
+def test_eval_all_partitions_labeled_domains_by_registry():
+    """有标注集但垂域未注册 → 归入「未注册」，不进跑分路径。
+
+    回归对象：`--eval-all` 只按磁盘目录枚举，未注册域会被送进跑分并在
+    `_tsv_config` 抛 KeyError 使门崩溃（退出码 1）。这里断言切分口径本身，
+    不依赖数据库与嵌入通道。
+    """
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+    from conformance_gate import partition_labeled_by_registry
+
+    runnable, unregistered = partition_labeled_by_registry(
+        ["gov", "papers", "screenplay"], ["papers", "screenplay"]
+    )
+    assert runnable == ["papers", "screenplay"]
+    assert unregistered == ["gov"]
+
+    # 全部已注册时差集为空，全部可跑
+    runnable, unregistered = partition_labeled_by_registry(
+        ["papers", "screenplay"], ["papers", "screenplay", "gov"]
+    )
+    assert runnable == ["papers", "screenplay"] and unregistered == []
+
+    # 空标注集不产生任何域
+    assert partition_labeled_by_registry([], ["papers"]) == ([], [])

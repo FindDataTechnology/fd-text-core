@@ -497,6 +497,23 @@ def vertical_commit_files(commits: list[str]) -> list[str]:
 
 
 # ---------- 7. 检索评测（可选第八项） ----------
+def partition_labeled_by_registry(
+    labeled: list[str], registered: list[str]
+) -> tuple[list[str], list[str]]:
+    """把「有标注集的域」按是否已注册切成 (可跑, 未注册)。
+
+    为什么必须切：标注集是随垂域交付的标准工件，它存在是正确状态；但未注册
+    的垂域运行时不可达（工具面由注册表生成），对它给 PASS/FAIL 等于给一个
+    不可达的域出验收判定。而不切会让门在 `list_datasets()` 按目录选中的未注册
+    域上抛 KeyError 直接崩——一个域是否启用属工具面配置，不是本门的可信度问题。
+    （change fix-text-core-gov-surface；回归实测见 tests/test_pure.py）
+    """
+    reg = set(registered)
+    runnable = [d for d in labeled if d in reg]
+    unregistered = sorted({d for d in labeled if d not in reg})
+    return runnable, unregistered
+
+
 def check_retrieval_eval(domain: str | None, k: int = 10, variant: str = "default") -> None:
     """检索评测：跑分器在标注集上的验收线（混合不低于任一单通道）。
 
@@ -729,13 +746,21 @@ def cli() -> int:
     if getattr(args, "eval_all", False):
         try:
             from fd_text_core.eval import list_datasets
+            from fd_text_core.verticals.registry import list_verticals
+
             # 按变体枚举：难题集是按需交付的度量面（目前只有 gov），
             # 无该变体的域不出现在结果里——不把「未交付」误报为失败。
-            _domains = list_datasets(args.eval_variant)
-            if not _domains:
+            _labeled = list_datasets(args.eval_variant)
+            _runnable, _unregistered = partition_labeled_by_registry(
+                _labeled, list_verticals()
+            )
+            # 未注册垂域：按三值口径报 SKIPPED，而非走进跑分崩溃。
+            for _d in _unregistered:
+                skip(f"检索评测[{_d}]", f"垂域 {_d} 未注册（该域标注集存在，但运行时不可达）")
+            if not _labeled:
                 skip(f"检索评测[{args.eval_variant}]",
                      f"variant={args.eval_variant} 的标注集（包内无任何域交付）")
-            for _d in _domains:
+            for _d in _runnable:
                 check_retrieval_eval(_d, variant=args.eval_variant)
         except Exception as exc:
             v("检索评测", f"枚举标注集失败：{type(exc).__name__}: {exc}")

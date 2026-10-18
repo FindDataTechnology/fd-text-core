@@ -56,7 +56,20 @@ def _validate_facets(domain: str, facets: dict | None) -> dict:
 
 
 def _tsv_config(domain: str) -> str:
-    return get_vertical(domain).tsv_config or os.environ.get("FDTEXT_TSV_CONFIG", "simple")
+    """垂域配置优先；未注册垂域回退环境变量。
+
+    与写入侧 ``embed_worker._tsv_config`` 同构——写侧早有此兜底、读侧没有，
+    两侧分裂会让读写用不同分词器（正是本模块要防的静默失配）。实测后果：
+    垂域未注册时 ``get_vertical`` 抛 KeyError，把质量门的 ``--eval-all``
+    直接打崩（该枚举按标注集目录进行，不看注册表）。
+    """
+    try:
+        v = get_vertical(domain)
+        if v.tsv_config:
+            return v.tsv_config
+    except KeyError:
+        pass
+    return os.environ.get("FDTEXT_TSV_CONFIG", "simple")
 
 
 def _filters_sql(domain: str, facets: dict, origin: str | None) -> tuple[str, list]:

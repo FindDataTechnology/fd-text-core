@@ -5,7 +5,6 @@
 """
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -94,13 +93,12 @@ def bootstrap_defaults() -> None:
     因为没有任何代码路径把它放进注册表。此处是兜底配置，垂域目录里的
     replace() 才是权威配置（同 papers/screenplay）。
 
-    ``gov`` 默认**不注册**：它的垂域验收要求网内 ``--strict`` 全绿（无损切块、
-    provenance、锚点余弦、schema 漂移、语料对账六项），而本轮只能离线跑，
-    六项全部 SKIPPED——未验收的垂域不得进入商业工具面。设
-    ``FDTEXT_ENABLE_GOV=1`` 可在过门后启用；届时 tool-surface manifest 须同步
-    声明那五个 ``gov_*`` 工具（selfcheck 会拦下未同步的情形）。
+    三个内置域**一律注册**，不设运行时开关：工具面由本注册表单一真源决定，
+    与 tool-surface manifest 双向一致。某垂域若要下线，须注册表与 manifest
+    同批变更（见 change fix-text-core-gov-surface 的 D1）——能靠环境变量
+    改变工具面的开关会让同一份代码在不同部署环境产生不同 `tools/list`。
     """
-    enabled: list[Vertical] = [
+    for v in (
         Vertical(
             name="papers",
             strategy=SlidingWindow(target=1200, max_size=1800),
@@ -120,20 +118,16 @@ def bootstrap_defaults() -> None:
             language="zh",
             display="剧本",
         ),
-    ]
-    if os.environ.get("FDTEXT_ENABLE_GOV") == "1":
-        enabled.append(
-            Vertical(
-                name="gov",
-                strategy=SlidingWindow(target=800, max_size=1500),
-                facets=_default_gov_facets(),
-                # 中文垂域：与 screenplay 同理走引擎原生 CJK 分词（无扩展依赖）
-                tsv_config="simple",
-                language="zh",
-                display="公文",
-            )
-        )
-    for v in enabled:
+        Vertical(
+            name="gov",
+            strategy=SlidingWindow(target=800, max_size=1500),
+            facets=_default_gov_facets(),
+            # 中文垂域：与 screenplay 同理走引擎原生 CJK 分词（无扩展依赖）
+            tsv_config="simple",
+            language="zh",
+            display="公文",
+        ),
+    ):
         if v.name not in _REGISTRY:
             register(v)
 
