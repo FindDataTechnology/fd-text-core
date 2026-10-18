@@ -17,10 +17,11 @@ spec:
     spec:
       containers:
         - name: fd-text-core
-          # 快照 sha（law-ai-official/fd-text-core-images 线，GHA 账单阻断期）——
-          # 对应真源 d118d8b（harvester 三修 + embedder dimensions）。
-          # 内容已逐项实证：t2s.json 4105 条 / harvest action=parse / load_papers dimensions。
-          image: ccr.ccs.tencentyun.com/finddata/fd-text-core:sha-3a4ec40
+          # 快照 sha（通用构建池 testaction001/build-pool 线）——
+          # 对应真源 39b1188（gov 恢复注册 + --eval-all 修崩溃，change
+          # fix-text-core-gov-surface）。2026-10-19 出片。
+          # 上一版 sha-3a4ec40 对应真源 d118d8b（2026-10-11），落后 20 个提交。
+          image: ccr.ccs.tencentyun.com/finddata/fd-text-core:sha-3283213
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
