@@ -2,6 +2,38 @@
 
 照 fd-legal-search-mcp 的新仓范式（2026-10-11 立项）。
 
+## 出片记录
+
+| 日期 | 镜像 tag | 真源 | 通道 | 工具面 |
+|---|---|---|---|---|
+| 2026-10-11 | `sha-3a4ec40` | `d118d8b` | `law-ai-official/fd-text-core-images` | 10（papers+screenplay） |
+| **2026-10-19** | **`sha-3283213`** | **`39b1188`** | **`testaction001/build-pool`** | **15（+gov）** |
+
+### 2026-10-19 出片与验收（change `fix-text-core-gov-surface`）
+
+上一版落后 20 个提交；本次带入 gov 垂域（工具面 10→15）、原串精确命中优先（`d7553b1`）、
+rrf 向量侧权重 2.0（`b519ddb`）、摄取契约修复（`f27cdb9`）与检索评测层。
+
+**出片通道选择**：`law-ai-official`（原通道账号）私有额度仅剩 17 min，冷缓存构建必超；
+改用通用池 `testaction001/build-pool`（剩 1810 min）。源仓与目标仓均 private，未触泄漏门。
+
+**五项验收（全部实跑通过，2026-10-19）**
+
+| 项 | 结果 |
+|---|---|
+| 工具面 10→15 | 网络实探 `/mcp` `tools/list` = **15**，含五个 `gov_*`；papers/screenplay 十个仍在 |
+| selfcheck 三方一致 | 运行时 15 == manifest 15 == 生产实探 15，双向断言通过 |
+| 三域真实检索 | gov「财政部 通知」→ 财政部普惠金融文；papers「transformer attention」→ arXiv 两篇；screenplay「窦娥冤」→ 竇娥冤 / 语义「复仇与正义」→ Medea。三例均带 provenance 三元组，无降级 |
+| 摄取路径冒烟 | pod 内 `load_gov.py --limit 5` → `inserted=0 skipped=5 superseded=0`（幂等），验证新 `iter_structured(s3,bucket,domain)` 签名与 0007 删约束后的库匹配 |
+| 锚点余弦 | **0.999935** ≥ 0.999 门槛（销掉 10-13 SiliconFlow 402 遗留的「充值后重跑」待办） |
+
+**出片前网内 strict**：`conformance_gate.py --changed-base d118d8b --allow-core-change --strict --eval-all`
+→ **10 PASS / 0 FAIL / 0 SKIPPED / 退出码 0**。输出留档于
+`openspec/changes/fix-text-core-gov-surface/reports/gate-strict-2026-10-19.log`。
+
+**回滚**：把 `deploy/k8s/fd-text-core.yaml` 的 image 改回 `sha-3a4ec40` 并推 gitee main 即可。
+库无需回滚——本次不改 schema、不写数据。
+
 ## 前置台账（已先行）
 
 - `fd-infra-deploy/PORTS.md` §1.2 已登 **NodePort 31887**（Fd-prod 平台线，紧邻 lex 块 31882-31886）
