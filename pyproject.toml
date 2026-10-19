@@ -11,7 +11,7 @@ requires-python = ">=3.10"
 license = "MIT"
 authors = [{ name = "FindDataTechnology" }]
 dependencies = [
-    "fastmcp>=2.0",
+    "fastmcp>=3.4,<4",
     "click",
     "uvicorn",
     "httpx",
