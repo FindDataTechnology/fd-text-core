@@ -3,7 +3,9 @@
   "server": "fd-text-core",
   "entry_path": "/fd-text-core",
   "product_line": "base",
-  "hosting": ["shared-instance"],
+  "hosting": [
+    "shared-instance"
+  ],
   "description": "通用文本处理引擎 MCP：公版经典剧本库（莎士比亚/希腊悲剧/元杂剧/明清传奇）、论文元数据、部委公文三域混合检索（关键词 ⊕ 语义向量）、预设化查询、逐结果溯源。垂域以配置接入（剧本/论文/公文），引擎核心零改动。",
   "skills_eligible_for_packs": [
     "screenplay-structure-analysis",
@@ -102,6 +104,27 @@
       "idempotentHint": true,
       "openWorldHint": false
     }
+  },
+  "output_structure": {
+    "declared": [],
+    "undeclared": [
+      "gov_federated",
+      "gov_presets",
+      "gov_read",
+      "gov_search",
+      "gov_semantic_search",
+      "papers_federated",
+      "papers_presets",
+      "papers_read",
+      "papers_search",
+      "papers_semantic_search",
+      "screenplay_federated",
+      "screenplay_presets",
+      "screenplay_read",
+      "screenplay_search",
+      "screenplay_semantic_search"
+    ],
+    "note": "未声明输出结构（已知缺口）。原因：本服务的返回形状随输入变化较大（过滤参数、可选字段、上游缺省），逐工具声明需先固化契约，排在 mcp-protocol-hardening 组 2 之后的迭代。清单显式登记此状态，使客户端不会把「未声明」误读为「无结构」。"
   },
   "tool_groups": [
     {
