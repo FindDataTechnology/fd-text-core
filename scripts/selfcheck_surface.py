@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """tool-surface manifest 双向 selfcheck（mcp-surface-contract）。
 
-断言两个方向：
+断言三个方向：
   1. 一致：manifest 声明的工具 == 引擎注册的工具（新增/删除工具而 manifest
      未同步即失败，反向同理）
-  2. 闭合：任何消费侧暴露的工具集 ⊆ manifest 的 commercial 集
+  2. 属性：manifest 的 tool_annotations 与运行时四项提示逐项相等（缺项/漏工具/
+     声明与实现不符都失败，报出工具名 + 字段名）
+  3. 闭合：任何消费侧暴露的工具集 ⊆ manifest 的 commercial 集
      ——消费侧由 --consumers 传入的 pack/套件目录提供
 
 代码注册面取 `mcp.list_tools()`（运行时真值，优先于 grep 码点）。
@@ -16,6 +18,7 @@
 用法：
     python3 scripts/selfcheck_surface.py                    # 只做方向 1
     python3 scripts/selfcheck_surface.py --consumers <dir>  # 加方向 2
+    python3 scripts/selfcheck_surface.py --write-annotations  # 从运行时重生成 manifest 的 tool_annotations
 退出码：0 通过 / 1 失败（列出差异）。
 """
 
@@ -34,6 +37,9 @@ SERVER_NAME = "fd-text-core"
 
 TOOL_PATTERN = re.compile(rf"mcp__{SERVER_NAME}__([A-Za-z0-9_.\-]+)")
 VERBS = ("search", "semantic_search", "read", "presets", "federated")
+
+#: 四项行为属性必须一次给全——缺一项客户端就得靠猜自动批准策略。
+REQUIRED_HINTS = ("readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint")
 
 
 def load_manifest() -> dict:
@@ -56,13 +62,84 @@ def manifest_tools(m: dict) -> dict[str, str]:
     return out
 
 
-async def runtime_tools() -> set[str]:
-    """从运行时取真值（引擎按已加载垂域动态注册工具）。"""
+async def runtime_annotation_map() -> dict[str, dict]:
+    """运行时每个工具的行为属性（协议层原样值）；未声明记为空 dict。"""
     sys.path.insert(0, str(REPO))
     from fd_text_core.server import mcp  # type: ignore
 
     tools = await mcp.list_tools()
-    return {getattr(t, "name", None) or t["name"] for t in tools}
+    out: dict[str, dict] = {}
+    for t in tools:
+        name = getattr(t, "name", None) or t["name"]
+        a = getattr(t, "annotations", None)
+        if a is None:
+            out[name] = {}
+            continue
+        out[name] = {k: getattr(a, k) for k in REQUIRED_HINTS}
+    return out
+
+
+def check_annotations(m: dict, declared: dict[str, str], runtime: dict[str, dict]) -> list[str]:
+    """manifest 行为属性 ↔ 运行时注册值逐项相等（两个方向都查）。
+
+    漏登记 → 客户端拿到 None，无从判断自动批准；谎报只读 → 客户端自动批准一个
+    会写库的工具。两者都是上牌缺陷，故必须报出工具名 + 字段名。
+    """
+    ann = m.get("tool_annotations")
+    if not isinstance(ann, dict):
+        return ["manifest 缺 tool_annotations（行为属性须随工具一并上牌）"]
+
+    problems: list[str] = []
+    for name in sorted(set(declared) - set(ann)):
+        problems.append(f"[属性缺失] {name}: manifest 未声明行为属性")
+    for name in sorted(set(ann) - set(declared)):
+        problems.append(f"[属性陈旧] {name}: tool_annotations 登记了未上牌的工具")
+    for name in sorted(set(declared) & set(ann)):
+        d = ann[name]
+        missing = [k for k in REQUIRED_HINTS if k not in d]
+        if missing:
+            problems.append(f"[属性不全] {name}: 缺 {', '.join(missing)}")
+            continue
+        rt = runtime.get(name, {})
+        if not rt:
+            problems.append(f"[属性缺失] {name}: 运行时未声明行为属性")
+            continue
+        for k in REQUIRED_HINTS:
+            if rt.get(k) != d[k]:
+                problems.append(
+                    f"[属性不符] {name}.{k}: manifest 声明 {d[k]!r} 与运行时 {rt.get(k)!r} 不符"
+                )
+    return problems
+
+
+def write_annotations(runtime: dict[str, dict]) -> None:
+    """用运行时真值重生成 manifest 的 tool_annotations（唯一写入口）。
+
+    手抄 15 个工具的名字与四项 flag 必然漂移；生成器的真值直接取自
+    `mcp.list_tools()`，与 selfcheck 的比对源是同一处。
+
+    只替换/插入 `tool_annotations` 这一块，不重排整个 manifest——其余字段是
+    人工维护的（含中文说明），整份 json.dumps 重写会产生无意义的空白 diff。
+    """
+    ann = {name: runtime[name] for name in sorted(runtime)}
+    body = json.dumps(ann, ensure_ascii=False, indent=2).splitlines()
+    block = ['  "tool_annotations": {']
+    block += ["  " + line for line in body[1:-1]]
+    block += ["  },"]
+
+    lines = MANIFEST.read_text(encoding="utf-8").splitlines()
+    start = next((i for i, ln in enumerate(lines) if ln.startswith('  "tool_annotations"')), None)
+    if start is not None:
+        end = next(i for i in range(start, len(lines)) if lines[i] == "  },")
+        lines[start:end + 1] = block
+    else:
+        at = next(i for i, ln in enumerate(lines) if ln.startswith('  "tool_groups"'))
+        lines[at:at] = block
+
+    text = "\n".join(lines) + "\n"
+    json.loads(text)  # 落盘前先确认仍是合法 JSON
+    MANIFEST.write_text(text, encoding="utf-8")
+    print(f"✓ 已写入 tool_annotations：{len(ann)} 工具 → {MANIFEST}")
 
 
 def expected_tools() -> set[str]:
@@ -107,13 +184,20 @@ def fail(problems: list[str]) -> "None":
 async def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--consumers", nargs="*", type=Path, default=[])
+    ap.add_argument("--write-annotations", action="store_true",
+                    help="按运行时真值重生成 manifest 的 tool_annotations 后退出")
     args = ap.parse_args()
 
     m = load_manifest()
     declared = manifest_tools(m)
-    actual = await runtime_tools()
+    runtime = await runtime_annotation_map()
+    actual = set(runtime)
     expected = expected_tools()
     problems: list[str] = []
+
+    if args.write_annotations:
+        write_annotations(runtime)
+        return 0
 
     # 方向 1a：运行时 vs 期望（垂域集合变化而 server 注册面未跟上）
     if actual != expected:
@@ -133,6 +217,9 @@ async def main() -> int:
     expected_count = m.get("registry", {}).get("expected_tool_count")
     if expected_count is not None and len(actual) != expected_count:
         problems.append(f"[工具数不符] 运行时 {len(actual)} ≠ manifest 声明 {expected_count}")
+
+    # 方向 1c：manifest 行为属性 vs 运行时（协议层四项提示，两个方向）
+    problems.extend(check_annotations(m, declared, runtime))
 
     # 方向 2：闭合（消费侧 ⊆ commercial）
     internal = {t for t, lv in declared.items() if lv == "internal"}
