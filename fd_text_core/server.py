@@ -28,8 +28,30 @@ def _ok(payload: dict) -> dict:
     return {"ok": True, **payload}
 
 
-def _err(code: str, message: str, **extra) -> dict:
-    return {"ok": False, "error": {"code": code, "message": message, **extra}}
+def _err(code: str, message: str, **extra):
+    """失败结果：`isError=true` 且带结构化错误体。
+
+    **为什么用 ToolResult 而不是返回 `{"ok": False, ...}`**：后者在协议上是一次
+    **成功**调用（isError=false），只有读载荷的人才知道它失败了。平台侧按
+    isError 判定失败（凭据失效、上游不可用都依赖这个信号），模型侧也更容易
+    把"成功但 ok=false"当成拿到了数据。
+
+    **为什么保留 `ok` 字段**：既有消费方（pack 技能与测试）按 `ok` 分支，
+    去掉它会让兼容性无声破裂。两个信号同时给：协议层的 isError 给平台，
+    `ok`/`error` 给调用方代码。
+
+    码用大写常量（UPSTREAM_UNAVAILABLE 等）：本服务早于统一的错误码契约，
+    保留原拼写以免破坏已上牌的消费方；语义与 mcp-error-semantics 的四类
+    一一对应（UPSTREAM_UNAVAILABLE / NOT_FOUND / FACET_INVALID|PRESET_INVALID
+    → invalid_input / NOT_SUPPORTED → not_wired）。
+    """
+    from fastmcp.tools.base import ToolResult
+
+    return ToolResult(
+        structured_content={"ok": False,
+                            "error": {"code": code, "message": message, **extra}},
+        is_error=True,
+    )
 
 
 def _register(domain: str) -> None:
