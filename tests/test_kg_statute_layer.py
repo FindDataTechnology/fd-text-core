@@ -518,6 +518,10 @@ def test_writer_queries_cover_graphiti_required_props():
     w = sl.StatuteGraphWriter
     for token in ("n.created_at", "n.name_embedding"):
         assert token in w.NODE_QUERY
+    # 向量必须经 vecf32 写入：FalkorDB 向量索引只认 VectorF32，写普通 list
+    # 会让 graphiti 向量检索报 Type mismatch（重建期实测，散文段全量失败）
+    assert "vecf32(row.name_embedding)" in w.NODE_QUERY
+    assert "CASE WHEN row.name_embedding IS NULL" in w.NODE_QUERY
     for token in ("e.source", "e.source_description", "e.content",
                   "e.valid_at", "e.entity_edges", "e.created_at"):
         assert token in w.EPISODE_QUERY

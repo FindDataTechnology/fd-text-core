@@ -963,7 +963,8 @@ class StatuteGraphWriter:
 
     # 属性名逐项对齐 graphiti-core 0.31.1 读模型：
     # - EntityNode 必填 uuid/name/group_id/summary/created_at；name_embedding
-    #   可空（None 写入 = 属性缺失，读模型接受）。
+    #   可空但**必须 vecf32() 写入**——FalkorDB 向量索引只认 VectorF32，
+    #   写普通 list 会让 graphiti 的向量检索报 Type mismatch（重建期实测）。
     # - EpisodicNode 必填 source/source_description/content/valid_at/
     #   entity_edges/created_at —— 少一项 get_episodes 就抛 pydantic 错误。
     # - EntityEdge 必填 uuid/source/target/created_at/name/fact/episodes，
@@ -973,7 +974,8 @@ UNWIND $rows AS row
 MERGE (n:Entity {uuid: row.uuid})
 SET n.name = row.name, n.group_id = row.group_id, n.summary = row.summary,
     n.labels = row.labels, n.created_at = row.created_at,
-    n.name_embedding = row.name_embedding,
+    n.name_embedding = CASE WHEN row.name_embedding IS NULL THEN NULL
+                            ELSE vecf32(row.name_embedding) END,
     n.status = row.status, n.src_db = row.src_db,
     n.publish_at = row.publish_at, n.effective_at = row.effective_at,
     n.effective_source = row.effective_source, n.version_year = row.version_year,
@@ -1079,6 +1081,10 @@ def attach_name_embeddings(plan: StatuteGraphPlan, embedder: Any, *,
     嵌入不是 LLM 抽取：本函数不产生任何抽取 token，`stats.llm_tokens` 保持 0。
     失败不抛出（跑批要能继续落图），但 `degraded/failed_batches/errors`
     必须如实写进 CLI 报告的 `embedding` 分项。
+
+    **所有批次必须在同一个事件循环里跑**：embedder 缓存的 AsyncOpenAI 客户端
+    绑定在首次使用的事件循环上，每批一次 asyncio.run 会让第二批起跨循环失败
+    （重建期实测恰好一半批次降级——event loop 绑定缺陷）。
     """
     if batch_size <= 0:
         raise ValueError("batch_size must be positive")
@@ -1098,25 +1104,29 @@ def attach_name_embeddings(plan: StatuteGraphPlan, embedder: Any, *,
         "failed_batches": 0,
         "errors": [],
     }
-    for i in range(0, len(nodes), batch_size):
-        batch = nodes[i: i + batch_size]
-        report["batches"] += 1
-        report["attempted"] += len(batch)
-        texts = [n.name.replace("\n", " ") for n in batch]
-        report["input_chars"] += sum(len(text) for text in texts)
-        try:
-            vectors = asyncio.run(embedder.create_batch(texts))
-            if len(vectors) != len(batch):
-                raise ValueError(
-                    f"vector count mismatch: got {len(vectors)}, expected {len(batch)}")
-            vecs = [[float(x) for x in vec] for vec in vectors]
-        except Exception as exc:  # 降级而非中断：报告里必须留痕
-            report["failed_batches"] += 1
-            report["degraded"] += len(batch)
-            if len(report["errors"]) < 5:
-                report["errors"].append(f"{type(exc).__name__}: {exc}")
-            continue
-        for node, vec in zip(batch, vecs):
-            node.name_embedding = vec
-        report["embedded"] += len(batch)
+
+    async def _run_batches() -> None:
+        for i in range(0, len(nodes), batch_size):
+            batch = nodes[i: i + batch_size]
+            report["batches"] += 1
+            report["attempted"] += len(batch)
+            texts = [n.name.replace("\n", " ") for n in batch]
+            report["input_chars"] += sum(len(text) for text in texts)
+            try:
+                vectors = await embedder.create_batch(texts)
+                if len(vectors) != len(batch):
+                    raise ValueError(
+                        f"vector count mismatch: got {len(vectors)}, expected {len(batch)}")
+                vecs = [[float(x) for x in vec] for vec in vectors]
+            except Exception as exc:  # 降级而非中断：报告里必须留痕
+                report["failed_batches"] += 1
+                report["degraded"] += len(batch)
+                if len(report["errors"]) < 5:
+                    report["errors"].append(f"{type(exc).__name__}: {exc}")
+                continue
+            for node, vec in zip(batch, vecs):
+                node.name_embedding = vec
+            report["embedded"] += len(batch)
+
+    asyncio.run(_run_batches())
     return report
