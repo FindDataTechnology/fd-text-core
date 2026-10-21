@@ -56,6 +56,23 @@ async def drop_graph(graphiti, group_id: str) -> None:
         print(f"drop graph {group_id}: {exc!r} (ignored)")
 
 
+def snapshot(uri: str) -> str:
+    """对图实例做一次 BGSAVE（零持久化实例唯一的数据保全手段）。
+
+    为什么必须有：zihan 的 FalkorDB 是 `save` 空、AOF 关的零持久化实例
+    （2026-10-21 复验报告记录）。2026-10-22 整机用户态卡死时，内存里
+    152 篇散文（约 4 小时）没有任何落盘副本——只能在跑批过程中周期性快照。
+    快照失败只告警不中断（保全尽力而为，跑批不该为它停）。
+    """
+    from falkordb import FalkorDB  # 懒加载：单测环境无图库依赖
+
+    host, port = lane_mod.parse_uri(uri)
+    try:
+        return str(FalkorDB(host=host, port=port).connection.execute_command("BGSAVE"))
+    except Exception as exc:  # noqa: BLE001
+        return f"BGSAVE failed: {exc!r}"
+
+
 async def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--vertical", required=True)
@@ -65,6 +82,10 @@ async def main() -> int:
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--rebuild", action="store_true")
     ap.add_argument("--aggregate-only", action="store_true")
+    ap.add_argument("--bgsave-every", type=int, default=20,
+                    help="每 N 条成功 episode 做一次 BGSAVE（0=关闭）")
+    ap.add_argument("--bgsave-uri", default="",
+                    help="图实例地址，默认取 LEXKG_FALKORDB_URI")
     args = ap.parse_args()
 
     cfg_path = args.config or (
@@ -99,6 +120,8 @@ async def main() -> int:
 
     from datetime import datetime
 
+    snap_uri = args.bgsave_uri or settings.falkor_uri
+    ok_since_snap = 0
     t0 = time.time()
     for i, ep in enumerate(pending, 1):
         ref = ep.get("valid_at") or ep.get("provenance", {}).get("as_of")
@@ -115,12 +138,20 @@ async def main() -> int:
             )
             state["done"].append(ep["episode_id"])
             save_state(args.state, state)
+            ok_since_snap += 1
             print(f"[{i}/{len(pending)}] OK {ep['episode_id']} "
                   f"({len(ep['content'])} ch) {(time.time() - t0) / i:.1f}s/ep avg", flush=True)
         except Exception as exc:  # noqa: BLE001 - 逐条容错，失败记录后继续
             state["failed"].append({"id": ep["episode_id"], "error": str(exc)[:300]})
             save_state(args.state, state)
             print(f"[{i}/{len(pending)}] FAIL {ep['episode_id']}: {exc!r}", flush=True)
+        if args.bgsave_every and ok_since_snap >= args.bgsave_every:
+            ok_since_snap = 0
+            print(f"  BGSAVE @ {len(state['done'])} done: {snapshot(snap_uri)}", flush=True)
+
+    if args.bgsave_every and ok_since_snap:
+        print(f"  BGSAVE(final) @ {len(state['done'])} done: {snapshot(snap_uri)}",
+              flush=True)
 
     await graphiti.close()
     print(f"finished done={len(state['done'])} failed={len(state['failed'])} "
