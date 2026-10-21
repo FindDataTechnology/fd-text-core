@@ -16,20 +16,27 @@
         --residual-out ... --report-out ...
 
 纪律：law_db 只读（唯一 SQL 是 SELECT）；--dry-run 只出计划统计不写图。
-LLM 成本恒为零（stats.llm_tokens = 0，spec「法规层全量建图零 LLM 成本」）。
+LLM 抽取成本恒为零（stats.llm_tokens = 0，spec「法规层全量建图零 LLM 成本」）。
+节点名嵌入不是抽取：由 `--embed`（默认开）控制，从 `LEXKG_EMBED_*` 读配置，
+按 64/批调用；未配置或调用失败时降级为 name_embedding=None，并如实写进
+报告的 `embedding` 分项（不静默）。
 """
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from fd_text_core.kg_lane.statute_layer import (  # noqa: E402
-    StatuteGraphWriter,
-    build_statute_graph,
+from fd_text_core.kg_lane import statute_layer as sl  # noqa: E402
+from fd_text_core.kg_lane.embedding import (  # noqa: E402
+    DEFAULT_DIM,
+    DEFAULT_MODEL,
+    EmbeddingSettings,
+    build_embedder,
 )
 
 # 只读：head/tail 切片在 SQL 侧完成（right(content,2000)/left(content,600)），
@@ -104,6 +111,48 @@ def write_residual(path: str, plan) -> int:
     return len(plan.residual)
 
 
+def embedding_settings_from_env(env) -> EmbeddingSettings | None:
+    """`LEXKG_EMBED_*` -> EmbeddingSettings；缺 base_url/api_key 返回 None。
+
+    与 lane.py 的读取口径一致（同一组环境变量），但不 import lane（避免
+    连带 llm 依赖）。`LEXKG_EMBED_DIM` 非法时抛 ValueError，由调用方记降级。
+    """
+    base_url = (env.get("LEXKG_EMBED_BASE_URL") or "").strip()
+    api_key = (env.get("LEXKG_EMBED_API_KEY") or "").strip()
+    if not base_url or not api_key:
+        return None
+    return EmbeddingSettings(
+        base_url=base_url,
+        api_key=api_key,
+        model=(env.get("LEXKG_EMBED_MODEL") or "").strip() or DEFAULT_MODEL,
+        dim=int(env.get("LEXKG_EMBED_DIM") or DEFAULT_DIM),
+        provider_only=(env.get("LEXKG_EMBED_PROVIDER_ONLY") or "").strip(),
+    )
+
+
+def run_embedding_step(plan, *, enabled: bool, env) -> dict:
+    """补 name_embedding 并返回报告分项；任何失败都降级计数、不中断建图。"""
+    if not enabled:
+        return sl.degraded_embedding_report(
+            plan, reason="disabled_by_flag", requested=False)
+    try:
+        settings = embedding_settings_from_env(env)
+    except Exception as exc:  # 配置脏值（如 DIM 非整数）也要留痕
+        return sl.degraded_embedding_report(
+            plan, reason=f"bad_config:{type(exc).__name__}: {exc}")
+    if settings is None:
+        return sl.degraded_embedding_report(
+            plan,
+            reason="missing_config:LEXKG_EMBED_BASE_URL/LEXKG_EMBED_API_KEY")
+    try:
+        embedder = build_embedder(settings)
+    except Exception as exc:  # 例如未装 openai 客户端
+        return sl.degraded_embedding_report(
+            plan, reason=f"embedder_init_failed:{type(exc).__name__}: {exc}")
+    return sl.attach_name_embeddings(
+        plan, embedder, model=settings.model, dim=settings.dim)
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -119,6 +168,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="id=按 id 序；seed=固定 md5 种子序（抽样可复算）")
     ap.add_argument("--seed", default="kg-audit-seed42",
                     help="种子序的种子串（默认沿用普查 seed42，样本前 400 与普查 sample400 重叠）")
+    ap.add_argument("--embed", action=argparse.BooleanOptionalAction, default=True,
+                    help="补 Entity.name_embedding（默认开；配置读 LEXKG_EMBED_*，"
+                         "缺配置/失败降级为 None 并计入报告 embedding 分项）")
     args = ap.parse_args(argv)
 
     records = fetch_records(args.dsn, limit=args.limit, order=args.order, seed=args.seed)
@@ -126,11 +178,17 @@ def main(argv: list[str] | None = None) -> int:
           + (f" seed={args.seed}" if args.order == "seed" else "") + ")",
           flush=True)
 
-    plan = build_statute_graph(records, group_id=args.group_id)
+    plan = sl.build_statute_graph(records, group_id=args.group_id)
+    embedding = run_embedding_step(plan, enabled=args.embed, env=os.environ)
+    if embedding["requested"]:
+        print(f"embedding: {embedding['embedded']}/{embedding['nodes']} vectors, "
+              f"degraded={embedding['degraded']}"
+              + (f" ({embedding['reason']})" if embedding["reason"] else ""),
+              flush=True)
 
     written = None
     if not args.dry_run:
-        writer = StatuteGraphWriter(args.falkordb_uri, args.group_id).connect()
+        writer = sl.StatuteGraphWriter(args.falkordb_uri, args.group_id).connect()
         written = writer.upsert_plan(plan)
         print(f"upserted: {written}")
 
@@ -145,6 +203,7 @@ def main(argv: list[str] | None = None) -> int:
                   "seed": args.seed if args.order == "seed" else None},
         "upserted": written,
         "stats": plan.stats,
+        "embedding": embedding,
         "contradictions": plan.contradictions,
         "residual_out": args.residual_out or None,
         "residual_rows": len(plan.residual),
@@ -169,6 +228,7 @@ def main(argv: list[str] | None = None) -> int:
         "amendment": s["amendment"],
         "graph": s["graph"],
         "residual": s["residual"],
+        "embedding": embedding,
         "contradictions": len(plan.contradictions),
         "llm_tokens": 0,
     }, ensure_ascii=False, indent=1))

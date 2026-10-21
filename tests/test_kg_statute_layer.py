@@ -23,6 +23,8 @@ import copy
 import json
 import subprocess
 import sys
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -32,6 +34,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from fd_text_core.kg_lane import statute_layer as sl  # noqa: E402
 
 FIXTURE = Path(__file__).resolve().parents[1] / "tests/fixtures/kg_statute/records.jsonl"
+
+# 固定构建时钟：created_at 是「构建时刻」，注入后同输入两次构造可逐字节比对。
+FIXED_NOW = datetime(2026, 10, 22, 12, 0, 0, tzinfo=timezone.utc)
 
 
 def load_fixture() -> list[dict]:
@@ -276,7 +281,7 @@ def test_docno_contradiction_blocked_and_recorded():
 # --------------------------------------------------------------- 图构造
 
 def _plan():
-    return sl.build_statute_graph(load_fixture(), group_id=GROUP)
+    return sl.build_statute_graph(load_fixture(), group_id=GROUP, now=FIXED_NOW)
 
 
 def _edges(plan, rel):
@@ -295,7 +300,7 @@ def test_effective_self_edge_shape():
     assert len(mine) == 1
     e = mine[0]
     assert e.dst == node.uuid  # 自环：施行窗口的最小确定性承载
-    assert e.valid_at == "2027-01-01T00:00:00"
+    assert e.valid_at == "2027-01-01T00:00:00+00:00"
     assert "expiry字段" in e.fact
     assert e.episodes  # provenance 回指 episode
 
@@ -318,7 +323,7 @@ def test_repeal_edges_and_corpus_backlink():
     dec = _node_by_name(plan, "呼和浩特市人民代表大会常务委员会关于废止户外广告管理条例等2件地方性法规的决定")
     edge = next(e for e in rep if e.dst == target.uuid)
     assert edge.src == dec.uuid
-    assert edge.valid_at == "2024-07-01T00:00:00"  # 决定的施行日（公布日推导）
+    assert edge.valid_at == "2024-07-01T00:00:00+00:00"  # 决定的施行日（公布日推导）
     assert "废止《户外广告管理条例》" in edge.fact
 
 
@@ -328,8 +333,8 @@ def test_repeal_backfills_effective_invalid_at():
     target = _node_by_name(plan, "户外广告管理条例")
     e = next(e for e in plan.edges.values()
              if e.name == sl.REL_EFFECTIVE and e.src == target.uuid)
-    assert e.valid_at == "1995-05-01T00:00:00"
-    assert e.invalid_at == "2024-07-01T00:00:00"
+    assert e.valid_at == "1995-05-01T00:00:00+00:00"
+    assert e.invalid_at == "2024-07-01T00:00:00+00:00"
     assert "2024-07-01起废止" in e.fact
 
 
@@ -403,6 +408,8 @@ def test_full_fixture_stats():
     assert s["graph"]["edges_by_relation"] == {
         "AMENDS": 3, "EFFECTIVE": 22, "REPEALS": 4, "VERSION_OF": 1}
     assert s["graph"]["episodes"] == 24
+    # 110/124 无施行日也无公布日：Episodic.valid_at 退化为构建时刻并计数
+    assert s["graph"]["episodes_valid_at_fallback"] == 2
     assert s["residual"]["rows"] == 5
     assert s["residual"]["reasons"] == {
         "eff_form_only_no_date": 1, "no_anchor": 5, "no_eff_date": 1, "status_unknown": 1}
@@ -421,10 +428,163 @@ def test_residual_rows_content():
 # --------------------------------------------------------------- 幂等
 
 def test_build_plan_idempotent():
-    """同输入构造两次，计划内容逐字节不变（批处理可重入的构造侧保证）。"""
-    a = sl.build_statute_graph(load_fixture(), group_id=GROUP).snapshot()
-    b = sl.build_statute_graph(load_fixture(), group_id=GROUP).snapshot()
+    """同输入构造两次，计划内容逐字节不变（批处理可重入的构造侧保证）。
+
+    created_at 是构建时刻，必须注入固定时钟才能比对（见 FIXED_NOW）；uuid 与
+    时钟无关，两次构造天然一致。
+    """
+    a = sl.build_statute_graph(load_fixture(), group_id=GROUP, now=FIXED_NOW).snapshot()
+    b = sl.build_statute_graph(load_fixture(), group_id=GROUP, now=FIXED_NOW).snapshot()
     assert a == b
+
+
+# ------------------------------------------- graphiti 0.31.1 读模型兼容
+
+def test_node_uuid_is_canonical_uuid5_and_created_at_aware():
+    """EntityNode 读模型：uuid 是标准 UUID 字符串，created_at 非空且带时区。"""
+    plan = _plan()
+    assert plan.nodes
+    for node in plan.nodes.values():
+        parsed = uuid.UUID(node.uuid)
+        assert str(parsed) == node.uuid  # 带连字符的标准形式（非 32/40 位 hex）
+        assert parsed.version == 5  # 确定性 UUID5
+        row = node.row()
+        assert row["uuid"] == node.uuid
+        assert row["group_id"] == GROUP
+        assert row["name"] and row["summary"]  # EntityNode 必填
+        assert row["name_embedding"] is None  # 未嵌入时显式 None
+        created = datetime.fromisoformat(row["created_at"])
+        assert created.tzinfo is not None
+        assert created == FIXED_NOW
+
+
+def test_edge_uuid_and_datetime_fields_are_read_model_safe():
+    """EntityEdge 读模型：uuid 合法、created_at 必填、空日期必须写 None。"""
+    plan = _plan()
+    assert plan.edges
+    for edge in plan.edges.values():
+        assert str(uuid.UUID(edge.uuid)) == edge.uuid
+        row = edge.row()
+        assert row["group_id"] == GROUP
+        assert row["name"] and row["fact"] and row["episodes"]
+        created = datetime.fromisoformat(row["created_at"])
+        assert created.tzinfo is not None
+        for key in ("valid_at", "invalid_at", "expired_at", "reference_time"):
+            # graphiti parse_db_date("") -> ValueError；空值只能写 None
+            assert row[key] != "", f"{key} 不能是空串"
+            if row[key] is not None:
+                assert datetime.fromisoformat(row[key]).tzinfo is not None
+
+
+def test_episode_has_graphiti_required_fields():
+    """EpisodicNode 必填字段齐全（provenance 走 get_episodes 不再撞校验）。"""
+    plan = _plan()
+    edge_uuids = {e.uuid for e in plan.edges.values()}
+    assert plan.episodes
+    for ep_uuid, props in plan.episodes.items():
+        assert str(uuid.UUID(ep_uuid)) == ep_uuid
+        assert props["uuid"] == ep_uuid
+        assert props["source"] == "text"  # graphiti EpisodeType.text
+        assert props["source_description"]
+        assert props["content"]
+        law_id = int(props["name"].rsplit(":", 1)[1])
+        assert rec(law_id)["title"] in props["content"]
+        assert len(props["content"]) <= sl.EPISODE_CONTENT_CHARS
+        created = datetime.fromisoformat(props["created_at"])
+        assert created == FIXED_NOW and created.tzinfo is not None
+        assert datetime.fromisoformat(props["valid_at"]).tzinfo is not None
+        assert isinstance(props["entity_edges"], list)
+        assert set(props["entity_edges"]) <= edge_uuids
+    # 至少一个 episode 回填了实际边 uuid，且与边侧 episodes 互指
+    linked = [p for p in plan.episodes.values() if p["entity_edges"]]
+    assert linked
+    for props in linked:
+        for e_uuid in props["entity_edges"]:
+            assert props["uuid"] in plan.edges[e_uuid].episodes
+
+
+def test_uuid_independent_of_build_clock():
+    """uuid5 与时钟无关：换构建时刻，节点/边/episode 身份不变。"""
+    a = sl.build_statute_graph(load_fixture(), group_id=GROUP, now=FIXED_NOW)
+    later = datetime(2027, 1, 1, tzinfo=timezone.utc)
+    b = sl.build_statute_graph(load_fixture(), group_id=GROUP, now=later)
+    assert set(a.nodes) == set(b.nodes)
+    assert set(a.edges) == set(b.edges)
+    assert set(a.episodes) == set(b.episodes)
+
+
+def test_writer_queries_cover_graphiti_required_props():
+    """写入 Cypher 必须覆盖读模型必填属性（回归锁）。"""
+    w = sl.StatuteGraphWriter
+    for token in ("n.created_at", "n.name_embedding"):
+        assert token in w.NODE_QUERY
+    for token in ("e.source", "e.source_description", "e.content",
+                  "e.valid_at", "e.entity_edges", "e.created_at"):
+        assert token in w.EPISODE_QUERY
+    for token in ("r.created_at", "r.valid_at", "r.invalid_at",
+                  "r.expired_at", "r.reference_time"):
+        assert token in w.EDGE_QUERY
+
+
+# --------------------------------------------------------------- 嵌入（非抽取）
+
+class FakeEmbedder:
+    """异步假嵌入：可选让某批抛错 / 首批少返回一个向量。"""
+
+    def __init__(self, *, dim=4, fail_batches=(), short_batch=False):
+        self.dim = dim
+        self.fail_batches = set(fail_batches)
+        self.short_batch = short_batch
+        self.calls: list[list[str]] = []
+
+    async def create_batch(self, texts):
+        self.calls.append(list(texts))
+        n = len(self.calls)
+        if n in self.fail_batches:
+            raise RuntimeError("boom")
+        if self.short_batch and n == 1:
+            return [[0.0] * self.dim for _ in texts[:-1]]
+        return [[float(i)] * self.dim for i, _ in enumerate(texts)]
+
+
+def test_attach_name_embeddings_success():
+    plan = _plan()
+    emb = FakeEmbedder(dim=4)
+    rep = sl.attach_name_embeddings(plan, emb, batch_size=10, model="m", dim=4)
+    n = len(plan.nodes)
+    assert rep["embedded"] == n and rep["attempted"] == n
+    assert rep["degraded"] == 0 and rep["failed_batches"] == 0
+    assert rep["batches"] == 3  # 30 节点 / 10
+    assert all(len(node.name_embedding) == 4 for node in plan.nodes.values())
+
+
+def test_attach_name_embeddings_batch_failure_degrades_and_reports():
+    plan = _plan()
+    emb = FakeEmbedder(dim=4, fail_batches={2})
+    rep = sl.attach_name_embeddings(plan, emb, batch_size=10)
+    assert rep["embedded"] == 20 and rep["degraded"] == 10
+    assert rep["failed_batches"] == 1
+    assert rep["errors"] and "RuntimeError: boom" in rep["errors"][0]
+    assert sum(1 for n in plan.nodes.values() if n.name_embedding is None) == 10
+
+
+def test_attach_name_embeddings_vector_count_mismatch_degrades():
+    plan = _plan()
+    emb = FakeEmbedder(short_batch=True)
+    rep = sl.attach_name_embeddings(plan, emb, batch_size=sl.EMBED_BATCH)
+    assert rep["embedded"] == 0
+    assert rep["degraded"] == len(plan.nodes)
+    assert any("vector count mismatch" in err for err in rep["errors"])
+    assert all(node.name_embedding is None for node in plan.nodes.values())
+
+
+def test_degraded_embedding_report_counts_nodes():
+    plan = _plan()
+    rep = sl.degraded_embedding_report(plan, reason="missing_config")
+    assert rep["requested"] is True
+    assert rep["embedded"] == 0
+    assert rep["degraded"] == len(plan.nodes)
+    assert all(node.name_embedding is None for node in plan.nodes.values())
 
 
 class FakeBoltWriter(sl.StatuteGraphWriter):
@@ -492,10 +652,17 @@ def test_parse_uri():
 
 # --------------------------------------------------------------- CLI
 
+def _clear_embed_env(monkeypatch):
+    for key in ("LEXKG_EMBED_BASE_URL", "LEXKG_EMBED_API_KEY", "LEXKG_EMBED_MODEL",
+                "LEXKG_EMBED_DIM", "LEXKG_EMBED_PROVIDER_ONLY"):
+        monkeypatch.delenv(key, raising=False)
+
+
 def test_cli_dry_run_writes_reports(tmp_path, monkeypatch):
     cli = _load_cli()
 
     monkeypatch.setattr(cli, "fetch_records", lambda dsn, **kw: load_fixture())
+    _clear_embed_env(monkeypatch)  # 离线：无嵌入配置必须走降级账单
     residual = tmp_path / "residual.tsv"
     report = tmp_path / "report.json"
     rc = cli.main([
@@ -514,6 +681,13 @@ def test_cli_dry_run_writes_reports(tmp_path, monkeypatch):
     assert len(rep["contradictions"]) == 1
     assert rep["provenance_index"]["lawdb:law:122"]["stable_id"] == "laws:122"
 
+    # 无嵌入配置：name_embedding 全 None，但必须如实记账（不静默）
+    emb = rep["embedding"]
+    assert emb["requested"] is True
+    assert emb["embedded"] == 0
+    assert emb["degraded"] == rep["stats"]["graph"]["nodes"]
+    assert "missing_config" in emb["reason"]
+
     lines = residual.read_text(encoding="utf-8").splitlines()
     # 前 7 列与普查 residual.tsv 同构（law_id/title/src_db/status/missing/publish/type）
     assert lines[0].split("\t")[:7] == [
@@ -521,6 +695,43 @@ def test_cli_dry_run_writes_reports(tmp_path, monkeypatch):
     assert len(lines) == 6  # header + 5 残余行
     row110 = next(line for line in lines if line.startswith("110\t"))
     assert "no_eff_date;status_unknown;no_anchor" in row110
+
+
+def test_cli_no_embed_marks_skipped(tmp_path, monkeypatch):
+    """--no-embed 显式关闭：请求为 False，节点计入 skipped 而非 degraded。"""
+    cli = _load_cli()
+    monkeypatch.setattr(cli, "fetch_records", lambda dsn, **kw: load_fixture())
+    _clear_embed_env(monkeypatch)
+    report = tmp_path / "report.json"
+    rc = cli.main([
+        "--dsn", "postgresql://fake/law_db", "--group-id", GROUP, "--dry-run",
+        "--no-embed", "--report-out", str(report),
+    ])
+    assert rc == 0
+    rep = json.loads(report.read_text(encoding="utf-8"))
+    emb = rep["embedding"]
+    assert emb["requested"] is False
+    assert emb["reason"] == "disabled_by_flag"
+    assert emb["embedded"] == 0
+    assert emb["degraded"] == 0
+    assert emb["skipped"] == rep["stats"]["graph"]["nodes"]
+
+
+def test_embedding_settings_from_env():
+    cli = _load_cli()
+    assert cli.embedding_settings_from_env({}) is None
+    assert cli.embedding_settings_from_env(
+        {"LEXKG_EMBED_BASE_URL": "https://x/v1"}) is None
+    settings = cli.embedding_settings_from_env({
+        "LEXKG_EMBED_BASE_URL": "https://x/v1",
+        "LEXKG_EMBED_API_KEY": "k",
+        "LEXKG_EMBED_MODEL": "m",
+        "LEXKG_EMBED_DIM": "512",
+        "LEXKG_EMBED_PROVIDER_ONLY": "p",
+    })
+    assert settings is not None
+    assert (settings.base_url, settings.api_key, settings.model,
+            settings.dim, settings.provider_only) == ("https://x/v1", "k", "m", 512, "p")
 
 
 def test_cli_seed_order_sql_params(monkeypatch):

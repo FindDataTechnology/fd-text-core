@@ -26,6 +26,15 @@ dry-run 数字与普查不可对照。
 - 幂等：同输入构造两次，节点/边的内容与数量不变；写入用 MERGE-on-uuid
   upsert，可重入。
 
+graphiti-core 0.31.1 读模型兼容（2026-10-22 修复，真缺陷）：图里的 uuid 一律
+确定性 UUID5（带连字符），Entity/Episodic/RELATES_TO 都写 `created_at`
+（ISO8601 带时区）。Episodic 必须补齐模型必填的 `source/content/valid_at/
+entity_edges`——缺任一字段都会让 `get_episodes` 在 pydantic 校验时抛错，
+provenance 解析随之降级；Entity 的 `created_at` 为 NULL 则 `get_by_group_ids`
+每轮抛错（重建期实测 230s/ep）。Entity 的 `name_embedding` 可选，由 CLI
+`--embed`（默认开）补齐，失败降级为 None 并在报告 `embedding` 分项计数。
+**嵌入不是抽取**：`stats.llm_tokens` 仍恒为 0，两项分账。
+
 图模型（与车道查询面 `query.py` 兼容：`:Entity` 节点 + `RELATES_TO` 边，
 边带 `name`(语义关系)/`fact`/`episodes`/`valid_at`/`invalid_at`）：
 
@@ -47,10 +56,12 @@ dry-run 数字与普查不可对照。
 """
 from __future__ import annotations
 
-import hashlib
+import asyncio
 import re
+import uuid as uuid_mod
 from collections import Counter
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping
 
 from .merge import canonical_name, inline_docno, normalize
@@ -61,7 +72,9 @@ __all__ = [
     "ParsedStatute",
     "StatuteGraphPlan",
     "StatuteGraphWriter",
+    "attach_name_embeddings",
     "build_statute_graph",
+    "degraded_embedding_report",
     "field_date",
     "cn2int",
     "resolve_effective",
@@ -71,6 +84,12 @@ __all__ = [
 
 HEAD_CHARS = 600  # 正文头部窗口：通过日期句式在此解析
 TAIL_CHARS = 2000  # 正文尾部窗口：与普查口径一致（right(content, 2000)）
+EPISODE_CONTENT_CHARS = 2000  # Episodic.content 上限：标题 + 来源摘要 + 正文头部
+EMBED_BATCH = 64  # 嵌入接口批大小（graphiti 读模型只要求 name_embedding 可空）
+
+# 确定性 UUID5 命名空间（固定常量，绝不改）：换命名空间会让全部节点/边换
+# uuid，等于对生产图做一次全量重建。输入约定见 _node_uuid/_edge_uuid/_ep_uuid。
+KG_NAMESPACE = uuid_mod.UUID("4f6a1d2e-9c3b-5e7a-8d10-2b6c9f4a7e01")
 
 KNOWN_STATUSES = {"有效", "已修改", "已废止", "失效", "已失效", "尚未生效"}
 
@@ -391,6 +410,7 @@ class ParsedStatute:
     node_name: str  # 写图名（文号内联参与身份）
     decision_class: bool  # 决定类文书（type 含「决定」）
     anchor: bool  # 普查 anchor：publish 可解 ∪ docno 非空 ∪ 标题含第N号
+    content_excerpt: str  # Episodic.content 的正文部分（头部窗口）
 
 
 def parse_law_record(record: Mapping[str, Any]) -> ParsedStatute:
@@ -453,6 +473,7 @@ def parse_law_record(record: Mapping[str, Any]) -> ParsedStatute:
         node_name=name,
         decision_class="决定" in type_,
         anchor=anchor,
+        content_excerpt=head or content[:HEAD_CHARS],
     )
 
 
@@ -460,18 +481,60 @@ def parse_law_record(record: Mapping[str, Any]) -> ParsedStatute:
 # 三、图构造
 # =====================================================================
 
-# 幂等时间戳：图内 created_at 必须确定性（墙钟会让「同输入两次构造」的
-# 内容漂移）。取语义日期，缺失退化为 epoch。
-_EPOCH = "1970-01-01T00:00:00"
+# --- 图属性格式（graphiti-core 0.31.1 读模型的硬要求） ------------------
+#
+# uuid：标准 UUID 字符串（带连字符），UUID5 确定性生成——幂等重跑同 uuid。
+# created_at：ISO8601 带时区；Entity/Episodic/RELATES_TO 全部必填（读模型
+# 里 EntityNode.created_at 是 datetime、EpisodicNode 的 from_record 对
+# created_at/valid_at 显式 raise，EntityEdge.created_at 也必填）。
+# 空日期一律写 None（= Cypher null，属性缺失）：graphiti 的 parse_db_date
+# 对空字符串会直接抛 ValueError，不能写 ""。
+
+def _utc_iso(dt: datetime) -> str:
+    """datetime -> ISO8601 带时区（naive 视为 UTC）。"""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc).isoformat()
 
 
-def _det_created(parsed: ParsedStatute) -> str:
-    d = parsed.publish or parsed.eff.date
-    return f"{d}T00:00:00" if d else _EPOCH
+def _day_iso(day: str) -> str:
+    """`YYYY-MM-DD` -> 当日零点 ISO8601（带时区）。"""
+    return f"{day}T00:00:00+00:00"
 
 
-def _sha(key: str) -> str:
-    return hashlib.sha1(key.encode("utf-8")).hexdigest()
+def _node_uuid(group_id: str, name: str) -> str:
+    return str(uuid_mod.uuid5(KG_NAMESPACE, f"{group_id}|node|{name}"))
+
+
+def _ep_uuid(group_id: str, name: str) -> str:
+    return str(uuid_mod.uuid5(KG_NAMESPACE, f"{group_id}|ep|{name}"))
+
+
+def _edge_uuid(group_id: str, src_uuid: str, rel: str, dst_uuid: str) -> str:
+    return str(uuid_mod.uuid5(
+        KG_NAMESPACE, f"{group_id}|edge|{src_uuid}|{rel}|{dst_uuid}"))
+
+
+def _episode_valid_at(parsed: ParsedStatute, created_at: str) -> str:
+    """Episodic.valid_at：施行日或发布日；两者皆缺时退化为构建时刻。
+
+    读模型要求 valid_at 非空（from_record 对 None 显式 raise），而法规行
+    可能两个日期都缺（残余行）——此时用 created_at 是唯一不猜语义日期的
+    确定性兜底，行号进 `residual`、总数进 `stats.graph.episodes_valid_at_fallback`，
+    不静默。
+    """
+    d = parsed.eff.date or parsed.publish
+    return _day_iso(d) if d else created_at
+
+
+def _episode_content(parsed: ParsedStatute) -> str:
+    """Episodic.content：标题 + 来源摘要 + 正文头部（有界，不落全文）。"""
+    parts = [parsed.title,
+             f"来源：law_db.laws#{parsed.law_id}（{parsed.src_db or 'unknown'}源）"]
+    excerpt = (parsed.content_excerpt or "").strip()
+    if excerpt:
+        parts.append(excerpt)
+    return "\n".join(parts)[:EPISODE_CONTENT_CHARS]
 
 
 @dataclass
@@ -482,11 +545,15 @@ class StatuteNode:
     summary: str
     labels: list[str]
     props: dict[str, Any] = field(default_factory=dict)
+    created_at: str = ""  # ISO8601 带时区（graphiti EntityNode.created_at 必填）
+    name_embedding: list[float] | None = None  # graphiti EntityNode 可空字段
 
     def row(self) -> dict[str, Any]:
         return {
             "uuid": self.uuid, "name": self.name, "group_id": self.group_id,
-            "summary": self.summary, "labels": self.labels, **self.props,
+            "summary": self.summary, "labels": self.labels,
+            "created_at": self.created_at, "name_embedding": self.name_embedding,
+            **self.props,
         }
 
 
@@ -503,13 +570,19 @@ class StatuteEdge:
     invalid_at: str = ""
     expired_at: str = ""
     reference_time: str = ""
+    created_at: str = ""  # ISO8601 带时区（graphiti Edge.created_at 必填）
 
     def row(self) -> dict[str, Any]:
+        # 空日期 -> None：graphiti 的 parse_db_date 不接受 ""（会抛 ValueError）。
+        def _dt(value: str) -> str | None:
+            return value or None
+
         return {
             "uuid": self.uuid, "src": self.src, "dst": self.dst, "name": self.name,
             "fact": self.fact, "group_id": self.group_id, "episodes": self.episodes,
-            "valid_at": self.valid_at, "invalid_at": self.invalid_at,
-            "expired_at": self.expired_at, "reference_time": self.reference_time,
+            "valid_at": _dt(self.valid_at), "invalid_at": _dt(self.invalid_at),
+            "expired_at": _dt(self.expired_at), "reference_time": _dt(self.reference_time),
+            "created_at": self.created_at,
         }
 
 
@@ -539,14 +612,24 @@ class StatuteGraphPlan:
         }
 
 
-def _episode(parsed: ParsedStatute, group_id: str) -> tuple[str, dict[str, Any], str]:
-    """(episode_uuid, props, episode_name)。episode 名 = 稳定回指键。"""
+def _episode(parsed: ParsedStatute, group_id: str, created_at: str
+             ) -> tuple[str, dict[str, Any], str]:
+    """(episode_uuid, props, episode_name)。episode 名 = 稳定回指键。
+
+    props 对齐 graphiti 0.31.1 EpisodicNode 的必填字段：source/source_description/
+    content/valid_at/entity_edges/created_at/name/group_id/uuid。`entity_edges`
+    先给空列表，Phase 4b 按实际边回填（无边的 episode 保持空列表）。
+    """
     name = f"lawdb:{parsed.src_db}:{parsed.law_id}"
-    uuid = _sha(f"{group_id}|ep|{name}")
+    uuid = _ep_uuid(group_id, name)
     props = {
         "uuid": uuid, "name": name, "group_id": group_id,
         "source_description": f"law_db.laws#{parsed.law_id}",
-        "created_at": _det_created(parsed),
+        "source": "text",  # graphiti EpisodeType.text
+        "content": _episode_content(parsed),
+        "valid_at": _episode_valid_at(parsed, created_at),
+        "entity_edges": [],
+        "created_at": created_at,
     }
     return uuid, props, name
 
@@ -566,8 +649,14 @@ def _resolve_target(base: str, corpus_index: dict[str, list[StatuteNode]]) -> St
     return min(pool, key=lambda n: n.props.get("law_id", 0))
 
 
-def build_statute_graph(records: Iterable[Mapping[str, Any]], group_id: str) -> StatuteGraphPlan:
-    """一批 law_db 行 -> 节点/边/残余/矛盾/统计。纯函数、幂等。"""
+def build_statute_graph(records: Iterable[Mapping[str, Any]], group_id: str,
+                        *, now: datetime | None = None) -> StatuteGraphPlan:
+    """一批 law_db 行 -> 节点/边/残余/矛盾/统计。纯函数、幂等。
+
+    `now` 是图内 created_at 的构建时刻（默认当前 UTC）；测试注入固定时钟即可
+    断言「同输入两次构造 uuid/created_at 稳定」。uuid 本身与时钟无关。
+    """
+    created_at = _utc_iso(now or datetime.now(timezone.utc))
     parsed = [parse_law_record(r) for r in records]
     nodes: dict[str, StatuteNode] = {}
     episodes: dict[str, dict[str, Any]] = {}
@@ -584,6 +673,7 @@ def build_statute_graph(records: Iterable[Mapping[str, Any]], group_id: str) -> 
     edge_episodes: dict[str, set[str]] = {}
 
     def emit_edge(e: StatuteEdge) -> None:
+        e.created_at = created_at  # graphiti Edge.created_at 必填
         if e.uuid in edges:
             edge_episodes[e.uuid].update(e.episodes)
             return
@@ -593,10 +683,10 @@ def build_statute_graph(records: Iterable[Mapping[str, Any]], group_id: str) -> 
     # ---- Phase 1：行级节点 + episode + 解析统计 ----
     for p in parsed:
         eff_by_source[p.eff.source or "missing"] += 1
-        node_uuid = _sha(f"{group_id}|node|{p.node_name}")
+        node_uuid = _node_uuid(group_id, p.node_name)
         node = StatuteNode(
             uuid=node_uuid, name=p.node_name, group_id=group_id,
-            labels=["Entity", "Statute"],
+            labels=["Entity", "Statute"], created_at=created_at,
             summary=f"{p.title}｜{p.status or '未知'}｜{p.src_db}源"
                     + ("｜文号矛盾待修" if p.docno_contradiction else ""),
             props={
@@ -612,7 +702,7 @@ def build_statute_graph(records: Iterable[Mapping[str, Any]], group_id: str) -> 
         )
         if node_uuid not in nodes:  # 同名同行身份：首写胜（输入顺序确定性）
             nodes[node_uuid] = node
-        ep_uuid, ep_props, ep_name = _episode(p, group_id)
+        ep_uuid, ep_props, ep_name = _episode(p, group_id, created_at)
         episodes[ep_uuid] = ep_props
         provenance[ep_name] = {
             "source_db": "law_db", "stable_id": f"laws:{p.law_id}",
@@ -647,7 +737,7 @@ def build_statute_graph(records: Iterable[Mapping[str, Any]], group_id: str) -> 
     # 链不上（普查：边目标命中率取决于回链）。
     node_by_name: dict[str, str] = {}  # node_name -> uuid（行级节点）
     for p in parsed:
-        node_by_name[p.node_name] = _sha(f"{group_id}|node|{p.node_name}")
+        node_by_name[p.node_name] = _node_uuid(group_id, p.node_name)
     corpus_index: dict[str, list[StatuteNode]] = {}
     for p in parsed:
         u = node_by_name[p.node_name]
@@ -658,12 +748,12 @@ def build_statute_graph(records: Iterable[Mapping[str, Any]], group_id: str) -> 
         hit = _resolve_target(base, corpus_index)
         if hit is not None:
             return hit
-        stub_uuid = _sha(f"{group_id}|node|{base}")
+        stub_uuid = _node_uuid(group_id, base)
         stub = nodes.get(stub_uuid)
         if stub is None:
             stub = StatuteNode(
                 uuid=stub_uuid, name=base, group_id=group_id,
-                labels=["Entity", "Statute"],
+                labels=["Entity", "Statute"], created_at=created_at,
                 summary=f"{base}｜库外目标（由废止/修正句式推导）",
                 props={"status": "", "src_db": "", "publish_at": "",
                        "effective_at": "", "effective_source": "",
@@ -682,18 +772,18 @@ def build_statute_graph(records: Iterable[Mapping[str, Any]], group_id: str) -> 
         return p.eff.date or p.publish or ""
 
     for p in parsed:
-        ep_uuid = _episode(p, group_id)[0]
-        src_uuid = _sha(f"{group_id}|node|{p.node_name}")
+        ep_uuid = _episode(p, group_id, created_at)[0]
+        src_uuid = _node_uuid(group_id, p.node_name)
 
         # EFFECTIVE 自环：有具体施行日才建（无日不猜，row 进残余）
         if p.eff.date:
-            e_uuid = _sha(f"{group_id}|edge|{src_uuid}|{REL_EFFECTIVE}|{src_uuid}")
+            e_uuid = _edge_uuid(group_id, src_uuid, REL_EFFECTIVE, src_uuid)
             emit_edge(StatuteEdge(
                 uuid=e_uuid, src=src_uuid, dst=src_uuid, name=REL_EFFECTIVE,
                 fact=f"自{p.eff.date}起施行（来源：{SOURCE_LABELS[p.eff.source]}）",
                 group_id=group_id, episodes=[ep_uuid],
-                valid_at=f"{p.eff.date}T00:00:00",
-                reference_time=f"{p.publish or p.eff.date}T00:00:00",
+                valid_at=_day_iso(p.eff.date),
+                reference_time=_day_iso(p.publish or p.eff.date),
             ))
 
         # REPEALS：决定 -> 各被废止目标
@@ -704,14 +794,14 @@ def build_statute_graph(records: Iterable[Mapping[str, Any]], group_id: str) -> 
                 prev = repeal_at.get(tnode.uuid)
                 if not prev or d < prev:
                     repeal_at[tnode.uuid] = d
-            e_uuid = _sha(f"{group_id}|edge|{src_uuid}|{REL_REPEALS}|{tnode.uuid}")
+            e_uuid = _edge_uuid(group_id, src_uuid, REL_REPEALS, tnode.uuid)
             emit_edge(StatuteEdge(
                 uuid=e_uuid, src=src_uuid, dst=tnode.uuid, name=REL_REPEALS,
                 fact=f"废止《{target}》"
                      f"（来源：{'标题' if 'repeal_title' in p.repeal_tags else '附则'}）",
                 group_id=group_id, episodes=[ep_uuid],
-                valid_at=f"{d}T00:00:00" if d else "",
-                reference_time=f"{p.publish or d}T00:00:00" if (p.publish or d) else "",
+                valid_at=_day_iso(d) if d else "",
+                reference_time=_day_iso(p.publish or d) if (p.publish or d) else "",
             ))
 
         # AMENDS：修改决定 -> 《》目标；修正案/修订案 -> 宿主法
@@ -719,33 +809,43 @@ def build_statute_graph(records: Iterable[Mapping[str, Any]], group_id: str) -> 
             for target in p.amend.targets:
                 tnode = target_node_for(target)
                 d = _decision_date(p)
-                e_uuid = _sha(f"{group_id}|edge|{src_uuid}|{REL_AMENDS}|{tnode.uuid}")
+                e_uuid = _edge_uuid(group_id, src_uuid, REL_AMENDS, tnode.uuid)
                 emit_edge(StatuteEdge(
                     uuid=e_uuid, src=src_uuid, dst=tnode.uuid, name=REL_AMENDS,
                     fact=f"修改《{target}》", group_id=group_id, episodes=[ep_uuid],
-                    valid_at=f"{d}T00:00:00" if d else "",
-                    reference_time=f"{p.publish or d}T00:00:00" if (p.publish or d) else "",
+                    valid_at=_day_iso(d) if d else "",
+                    reference_time=_day_iso(p.publish or d) if (p.publish or d) else "",
                 ))
 
         # VERSION_OF：（YYYY修正）版本节点 -> 基础法
         if p.amend.kind == "version_paren" and p.amend.base_name:
             tnode = target_node_for(p.amend.base_name)
-            e_uuid = _sha(f"{group_id}|edge|{src_uuid}|{REL_VERSION_OF}|{tnode.uuid}")
+            e_uuid = _edge_uuid(group_id, src_uuid, REL_VERSION_OF, tnode.uuid)
             emit_edge(StatuteEdge(
                 uuid=e_uuid, src=src_uuid, dst=tnode.uuid, name=REL_VERSION_OF,
                 fact=f"{p.amend.version_year}年修正版本", group_id=group_id,
                 episodes=[ep_uuid],
-                reference_time=f"{p.publish}T00:00:00" if p.publish else "",
+                reference_time=_day_iso(p.publish) if p.publish else "",
             ))
 
     # ---- Phase 4：废止日回填 EFFECTIVE 窗口的 invalid_at ----
     for e in edges.values():
         if e.name == REL_EFFECTIVE and e.dst in repeal_at:
-            e.invalid_at = f"{repeal_at[e.dst]}T00:00:00"
+            e.invalid_at = _day_iso(repeal_at[e.dst])
             e.fact += f"；{repeal_at[e.dst]}起废止"
 
     for u, eps in edge_episodes.items():
         edges[u].episodes = sorted(eps)
+
+    # ---- Phase 4b：Episodic.entity_edges 回填实际边 uuid ----
+    # graphiti EpisodicNode 的必填字段（默认空列表也合法）；有实际边就写实际
+    # uuid，保证 provenance 沿 episode 找到的边与图内一致。
+    ep_edges: dict[str, set[str]] = {u: set() for u in episodes}
+    for e in edges.values():
+        for ep in e.episodes:
+            ep_edges.setdefault(ep, set()).add(e.uuid)
+    for ep_uuid, props in episodes.items():
+        props["entity_edges"] = sorted(ep_edges.get(ep_uuid, ()))
 
     # ---- Phase 5：残余清单（不猜：缺施行日/状态未知(非决定类)/无锚） ----
     reasons_counter: Counter[str] = Counter()
@@ -814,6 +914,10 @@ def build_statute_graph(records: Iterable[Mapping[str, Any]], group_id: str) -> 
             "nodes": len(nodes), "stub_nodes": sum(1 for x in nodes.values() if not x.props.get("in_corpus")),
             "edges": len(edges), "edges_by_relation": dict(sorted(edges_by_rel.items())),
             "episodes": len(episodes),
+            # Episodic.valid_at 无施行日/发布日可用、退化为构建时刻的行数
+            # （读模型要求 valid_at 非空；兜底不静默）
+            "episodes_valid_at_fallback": sum(
+                1 for p in parsed if not (p.eff.date or p.publish)),
         },
         "residual": {
             "rows": len(residual), "ratio": round(len(residual) / n, 4) if n else 0.0,
@@ -857,11 +961,20 @@ class StatuteGraphWriter:
 
     BATCH = 500
 
+    # 属性名逐项对齐 graphiti-core 0.31.1 读模型：
+    # - EntityNode 必填 uuid/name/group_id/summary/created_at；name_embedding
+    #   可空（None 写入 = 属性缺失，读模型接受）。
+    # - EpisodicNode 必填 source/source_description/content/valid_at/
+    #   entity_edges/created_at —— 少一项 get_episodes 就抛 pydantic 错误。
+    # - EntityEdge 必填 uuid/source/target/created_at/name/fact/episodes，
+    #   valid_at/invalid_at/expired_at/reference_time 可空（写 null）。
     NODE_QUERY = """
 UNWIND $rows AS row
 MERGE (n:Entity {uuid: row.uuid})
 SET n.name = row.name, n.group_id = row.group_id, n.summary = row.summary,
-    n.labels = row.labels, n.status = row.status, n.src_db = row.src_db,
+    n.labels = row.labels, n.created_at = row.created_at,
+    n.name_embedding = row.name_embedding,
+    n.status = row.status, n.src_db = row.src_db,
     n.publish_at = row.publish_at, n.effective_at = row.effective_at,
     n.effective_source = row.effective_source, n.version_year = row.version_year,
     n.doc_number = row.doc_number, n.kind = row.kind, n.in_corpus = row.in_corpus,
@@ -872,7 +985,9 @@ SET n.name = row.name, n.group_id = row.group_id, n.summary = row.summary,
 UNWIND $rows AS row
 MERGE (e:Episodic {uuid: row.uuid})
 SET e.name = row.name, e.group_id = row.group_id,
-    e.source_description = row.source_description, e.created_at = row.created_at
+    e.source = row.source, e.source_description = row.source_description,
+    e.content = row.content, e.valid_at = row.valid_at,
+    e.entity_edges = row.entity_edges, e.created_at = row.created_at
 """.strip()
 
     EDGE_QUERY = """
@@ -881,9 +996,9 @@ MERGE (a:Entity {uuid: row.src})
 MERGE (b:Entity {uuid: row.dst})
 MERGE (a)-[r:RELATES_TO {uuid: row.uuid}]->(b)
 SET r.name = row.name, r.fact = row.fact, r.group_id = row.group_id,
-    r.episodes = row.episodes, r.valid_at = row.valid_at,
-    r.invalid_at = row.invalid_at, r.expired_at = row.expired_at,
-    r.reference_time = row.reference_time
+    r.episodes = row.episodes, r.created_at = row.created_at,
+    r.valid_at = row.valid_at, r.invalid_at = row.invalid_at,
+    r.expired_at = row.expired_at, r.reference_time = row.reference_time
 """.strip()
 
     def __init__(self, uri: str, group_id: str):
@@ -922,3 +1037,86 @@ SET r.name = row.name, r.fact = row.fact, r.group_id = row.group_id,
             self._run(self.EDGE_QUERY, {"rows": batch})
         return {"nodes": len(node_rows), "episodes": len(episode_rows),
                 "edges": len(edge_rows)}
+
+
+# =====================================================================
+# 五、可选嵌入（不是抽取：与 llm_tokens 分账）
+# =====================================================================
+
+def degraded_embedding_report(plan: StatuteGraphPlan, *, reason: str,
+                              requested: bool = True) -> dict[str, Any]:
+    """未执行嵌入时的如实账单（不静默）：节点 name_embedding 全部为 None。
+
+    requested=True 时把全部节点计入 degraded（例如缺 `LEXKG_EMBED_*` 配置）；
+    requested=False（`--no-embed` 显式关闭）时计入 skipped，不算降级。
+    """
+    for node in plan.nodes.values():
+        node.name_embedding = None
+    n = len(plan.nodes)
+    return {
+        "requested": requested,
+        "reason": reason,
+        "model": None,
+        "dim": None,
+        "nodes": n,
+        "attempted": 0,
+        "embedded": 0,
+        "degraded": n if requested else 0,
+        "skipped": 0 if requested else n,
+        "input_chars": 0,
+        "batches": 0,
+        "failed_batches": 0,
+        "errors": [],
+    }
+
+
+def attach_name_embeddings(plan: StatuteGraphPlan, embedder: Any, *,
+                           batch_size: int = EMBED_BATCH,
+                           model: str | None = None,
+                           dim: int | None = None) -> dict[str, Any]:
+    """按批补 Entity.name_embedding；单批失败降级 None 并在报告记数。
+
+    嵌入不是 LLM 抽取：本函数不产生任何抽取 token，`stats.llm_tokens` 保持 0。
+    失败不抛出（跑批要能继续落图），但 `degraded/failed_batches/errors`
+    必须如实写进 CLI 报告的 `embedding` 分项。
+    """
+    if batch_size <= 0:
+        raise ValueError("batch_size must be positive")
+    nodes = sorted(plan.nodes.values(), key=lambda n: n.uuid)
+    report: dict[str, Any] = {
+        "requested": True,
+        "reason": "",
+        "model": model,
+        "dim": dim,
+        "nodes": len(nodes),
+        "attempted": 0,
+        "embedded": 0,
+        "degraded": 0,
+        "skipped": 0,
+        "input_chars": 0,
+        "batches": 0,
+        "failed_batches": 0,
+        "errors": [],
+    }
+    for i in range(0, len(nodes), batch_size):
+        batch = nodes[i: i + batch_size]
+        report["batches"] += 1
+        report["attempted"] += len(batch)
+        texts = [n.name.replace("\n", " ") for n in batch]
+        report["input_chars"] += sum(len(text) for text in texts)
+        try:
+            vectors = asyncio.run(embedder.create_batch(texts))
+            if len(vectors) != len(batch):
+                raise ValueError(
+                    f"vector count mismatch: got {len(vectors)}, expected {len(batch)}")
+            vecs = [[float(x) for x in vec] for vec in vectors]
+        except Exception as exc:  # 降级而非中断：报告里必须留痕
+            report["failed_batches"] += 1
+            report["degraded"] += len(batch)
+            if len(report["errors"]) < 5:
+                report["errors"].append(f"{type(exc).__name__}: {exc}")
+            continue
+        for node, vec in zip(batch, vecs):
+            node.name_embedding = vec
+        report["embedded"] += len(batch)
+    return report
