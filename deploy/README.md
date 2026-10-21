@@ -86,3 +86,17 @@ kubectl --context cheap -n fd-prod create secret generic fd-text-core-env \
 
 集群内 `initialize` / `tools/list` / `papers_search` / `papers_read` 四连实弹；
 公网 gateway 上应查无此条目（负例同属验收项）。
+
+## 外部依赖与私有化可用性
+
+papers 垂域的引用图能力（`openalex_references` / `openalex_citations`）依赖
+**OpenAlex**（`api.openalex.org`）。私有化交付时：
+
+- **需外部网络出口**；完全隔离环境内该能力**不可用**，须显式标注而不是静默返回空。
+- 授权 CC0，无需 key；礼貌池只要求 `User-Agent` 带联系邮箱（`mailto`）。
+- **失败口径**（空结果必须带原因，禁静默空）：
+  - `quota` — 429 配额/限流
+  - `upstream` — 5xx 上游故障
+  - `unreachable` — 网络不可达/超时
+  - `not_indexed` — 上游可达但查无此 work（DOI/ID 未收录）
+- 该能力不属 lex 交付包，也不进 `lex_packer` 登记表。
