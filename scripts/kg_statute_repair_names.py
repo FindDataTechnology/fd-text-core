@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -42,6 +43,8 @@ from kg_statute_build import (  # noqa: E402
 # 名字末尾的括号文号（全角/半角）
 _PAREN = ("（", "(")
 _CLOSE = ("）", ")")
+# 文号形态（括号内容必须命中，否则是附注不是文号）
+_DOCNO_LIKE = re.compile(r"第\s*[0-9〇零一二三四五六七八九十百]+\s*号")
 
 
 def docno_of(name: str) -> str | None:
@@ -62,9 +65,15 @@ def docno_of(name: str) -> str | None:
 
 
 def is_dirty_name(name: str) -> bool:
-    """污点判据：括号文号经归一后与原文不同（与建图器同一函数）。"""
+    """污点判据：括号内容**是文号**（含「第N号」）且归一后与原文不同。
+
+    必须先用文号形态卡一道：`X(附:中华人民共和国政府关于领海的声明)` 这类
+    合法括号附注不是文号，套归一规则会把附注削成半句（实测误判 1 例）。
+    """
     dn = docno_of(name)
-    return bool(dn) and normalize_docno_issuer(dn) != dn
+    if not dn or not _DOCNO_LIKE.search(dn):
+        return False
+    return normalize_docno_issuer(dn) != dn
 
 
 def find_dirty(graph) -> list[dict]:
@@ -80,7 +89,9 @@ def find_dirty(graph) -> list[dict]:
         if not is_dirty_name(name):
             continue
         dn = docno_of(name)
-        clean = name[: name.rfind(dn)] + normalize_docno_issuer(dn)
+        i = name.rfind(dn)
+        # 只替换文号本体，保留其后的右括号等字符
+        clean = name[:i] + normalize_docno_issuer(dn) + name[i + len(dn):]
         nb = graph.query(
             "MATCH (a:Entity)-[:RELATES_TO]-(b:Entity {uuid:$u}) "
             "RETURN DISTINCT a.law_id", {"u": uuid})
