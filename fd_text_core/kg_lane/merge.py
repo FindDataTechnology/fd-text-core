@@ -73,12 +73,19 @@ def normalize_docno_issuer(docno: str | None) -> str | None:
 
     实测源数据存在「财政部中华人民共和国财政部令第71号」这类**重复机关名**
     拼写（law_db 正文原文如此，见 76231 行）；「中华人民共和国」是机关规范名
-    的起始词，其之前的重复机关名是源拼接残留。规则：出现「中华人民共和国」
-    时取该处起的后缀；否则原样返回。幂等。
+    的起始词，其之前的重复机关名是源拼接残留。规则：取**最后一次**出现的
+    「中华人民共和国」起的后缀（首处就在 0 位时其前面仍是重复机关名，如
+    「中华人民共和国财政部中华人民共和国财政部令第13号」），否则原样返回。
+    另容忍源数据缺字形态「华人民共和国」。幂等。
     """
     if not docno:
         return docno
-    idx = docno.find("中华人民共和国")
+    idx = docno.rfind("中华人民共和国")
+    if idx > 0:
+        return docno[idx:]
+    if idx == 0:
+        return docno
+    idx = docno.rfind("华人民共和国")
     return docno[idx:] if idx > 0 else docno
 
 

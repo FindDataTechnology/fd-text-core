@@ -381,3 +381,23 @@ def test_docno_issuer_duplicate_prefix_normalized():
     # 幂等
     once = merge.canonical_name(dirty)
     assert merge.canonical_name(once) == once
+
+
+def test_docno_issuer_leading_repeat_and_missing_char_normalized():
+    """两种更脏的源数据形态（重建后实测图内 21 个节点里的 2 个）：
+
+    - 重复前缀本身以「中华人民共和国」开头（取最后一次出现，不能取首次）；
+    - 源数据缺字「华人民共和国」。
+    """
+    # 首处「中华人民共和国」就在 0 位，其后还有一处重复机关名
+    dirty2 = "《国家蓄滞洪区运用财政补偿资金管理规定》（中华人民共和国财政部中华人民共和国财政部令第13号）"
+    assert merge.canonical_name(dirty2) == \
+        "国家蓄滞洪区运用财政补偿资金管理规定（中华人民共和国财政部令第13号）"
+    # 缺字形态
+    dirty3 = "《民用爆炸物品进出口管理办法》（华人民共和国公安部中华人民共和国海关总署令第21号）"
+    assert merge.canonical_name(dirty3) == \
+        "民用爆炸物品进出口管理办法（中华人民共和国海关总署令第21号）"
+    # 规范形态不受影响
+    assert merge.normalize_docno_issuer("中华人民共和国财政部令第113号") == \
+        "中华人民共和国财政部令第113号"
+    assert merge.normalize_docno_issuer("财政部令第71号") == "财政部令第71号"
