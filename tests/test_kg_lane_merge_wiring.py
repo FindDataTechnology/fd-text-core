@@ -363,3 +363,21 @@ def test_docno_bare_concatenated_stays_legacy_consistent():
     assert a == b == ("行政单位财务规则财政部令", "第113号")
     # 年份序号括号形（2026年第28号）整段消费，不再残留（2026年）
     assert merge.canonical_name("关于X的决定（2026年第28号）") == "关于X的决定（2026年第28号）"
+
+
+def test_docno_issuer_duplicate_prefix_normalized():
+    """源数据脏形态：重复机关名前缀「财政部中华人民共和国财政部令第71号」
+    必须确定性归一为「中华人民共和国财政部令第71号」（实测 law_db 76231 行正文原文）。
+    规范形态（113 号）不受影响；归一是幂等的。
+    """
+    dirty = "《行政单位财务规则》（财政部中华人民共和国财政部令第71号）"
+    clean = "《行政单位财务规则》（中华人民共和国财政部令第71号）"
+    assert merge.canonical_name(dirty) == "行政单位财务规则（中华人民共和国财政部令第71号）"
+    # 脏/净两形态归并为同一身份
+    assert merge.merge_key(dirty) == merge.merge_key(clean)
+    # 113 规范形不被改写
+    assert merge.canonical_name("《行政单位财务规则》（中华人民共和国财政部令第113号）") == \
+        "行政单位财务规则（中华人民共和国财政部令第113号）"
+    # 幂等
+    once = merge.canonical_name(dirty)
+    assert merge.canonical_name(once) == once

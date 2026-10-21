@@ -64,7 +64,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping
 
-from .merge import canonical_name, inline_docno, normalize
+from .merge import canonical_name, inline_docno, normalize, normalize_docno_issuer
 
 __all__ = [
     "EffectiveInfo",
@@ -296,9 +296,13 @@ class DocNumberInfo:
 
 
 def _order_token(m: re.Match) -> str:
-    """令式匹配 -> 规范身份 token：机关令[YYYY年]第N号（年份归一到「年」形）。"""
+    """令式匹配 -> 规范身份 token：机关令[YYYY年]第N号（年份归一到「年」形）。
+
+    机关名经 normalize_docno_issuer 去重复前缀——源数据实测有
+    「财政部中华人民共和国财政部令第71号」这类重复机关名拼写。
+    """
     year = m.group(3) or m.group(4)
-    return f"{m.group(2)}{year + '年' if year else ''}第{m.group(5)}号"
+    return normalize_docno_issuer(f"{m.group(2)}{year + '年' if year else ''}第{m.group(5)}号")
 
 
 def parse_doc_numbers(title: str, docno: str | None) -> DocNumberInfo:

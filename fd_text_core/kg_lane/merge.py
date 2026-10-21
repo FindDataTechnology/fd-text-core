@@ -32,7 +32,7 @@ _BOOK_TITLE = re.compile(r"[《〈]([^》〉]+)[》〉]")
 #    主体里。无法则后缀判据时裸形的机关名边界不可判定（实测贪婪正则会把
 #    「行政单位财务规则财政部」整段当机关名吞掉），旧行为在拼接变体之间
 #    内部一致（既有测试锁定），不强行统一。
-_ISSUER_HEAD = r"[一-龥]{1,9}(?:部|委|局|署|府|厅|会|院|行|司|关)"
+_ISSUER_HEAD = r"[一-龥]{1,20}(?:部|委|局|署|府|厅|会|院|行|司|关)"
 _SEQ_NO = r"第[0-9零一二三四五六七八九十百]+号"
 _DOC_NUM_CORE = rf"(?:{_ISSUER_HEAD}令{_SEQ_NO}|\d{{4}}年{_SEQ_NO}|[〔\[]\d{{4}}[〕\]]\s*\d+号|{_SEQ_NO})"
 _DOC_NUM_WRAPPED = re.compile(rf"[（(]\s*({_DOC_NUM_CORE})\s*[)）]")
@@ -68,6 +68,20 @@ def split_statute_article(name: str) -> tuple[str, str | None]:
     return head, m.group(0)
 
 
+def normalize_docno_issuer(docno: str | None) -> str | None:
+    """文号机关名去重复前缀（源数据实测脏形态的确定性清理）。
+
+    实测源数据存在「财政部中华人民共和国财政部令第71号」这类**重复机关名**
+    拼写（law_db 正文原文如此，见 76231 行）；「中华人民共和国」是机关规范名
+    的起始词，其之前的重复机关名是源拼接残留。规则：出现「中华人民共和国」
+    时取该处起的后缀；否则原样返回。幂等。
+    """
+    if not docno:
+        return docno
+    idx = docno.find("中华人民共和国")
+    return docno[idx:] if idx > 0 else docno
+
+
 def split_doc_number(name: str) -> tuple[str, str | None]:
     """把「名称 + 文号」拆成 (去文号的名, 文号全形)。
 
@@ -91,7 +105,7 @@ def split_doc_number(name: str) -> tuple[str, str | None]:
     base = _WS.sub("", n[: span[0]] + n[span[1]:])
     if not base:
         return n, None
-    return base, docno
+    return base, normalize_docno_issuer(docno)
 
 
 def inline_docno(base: str, docno: str | None) -> str:

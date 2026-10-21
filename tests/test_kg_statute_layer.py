@@ -513,6 +513,16 @@ def test_uuid_independent_of_build_clock():
     assert set(a.episodes) == set(b.episodes)
 
 
+def test_docno_issuer_duplicate_prefix_normalized():
+    """源数据脏形态的重复机关名：解析后文号必须是规范形（实测 76231 行正文原文）。"""
+    dn = sl.parse_doc_numbers("行政单位财务规则", "财政部中华人民共和国财政部令第71号")
+    assert dn.meta_no == "中华人民共和国财政部令第71号"
+    assert dn.meta_no_num == 71
+    # 规范形不受影响
+    dn2 = sl.parse_doc_numbers("中华人民共和国财政部令第113号--行政单位财务规则", None)
+    assert dn2.title_no == "中华人民共和国财政部令第113号"
+
+
 def test_writer_queries_cover_graphiti_required_props():
     """写入 Cypher 必须覆盖读模型必填属性（回归锁）。"""
     w = sl.StatuteGraphWriter
