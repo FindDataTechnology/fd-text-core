@@ -98,6 +98,10 @@ def _close_unterminated(candidate: str) -> str:
 
     只在字符串外维护括号栈；发现右括号时若与栈顶匹配才出栈（不匹配说明原始
     数据本身畸形，保持栈不动，让下游继续截断重试）。
+
+    3. **截断点恰在反斜杠后**（``"foo\\``）：直接补 `"` 会被吃成转义引号
+       （``"foo\\"`` 在 JSON 语法里字符串仍未闭合）。先把悬挂反斜杠补成
+       完整的 `\\\\`（字面反斜杠，保留模型原内容）再闭引号。
     """
     in_string = False
     escaped = False
@@ -120,6 +124,9 @@ def _close_unterminated(candidate: str) -> str:
             if stack and stack[-1] == expected:
                 stack.pop()
     if in_string:
+        if escaped:
+            # 悬挂转义：不处理的话，下面补的引号会被吃成 \"，字符串仍未闭合
+            candidate += "\\"
         candidate += '"'
     for opener in reversed(stack):
         candidate += "}" if opener == "{" else "]"

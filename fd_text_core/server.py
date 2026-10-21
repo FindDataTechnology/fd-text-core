@@ -197,6 +197,12 @@ def _register(domain: str) -> None:
 for _d in list_verticals():
     _register(_d)
 
+# KG 车道查询工具族（kg-lane-delivery-v1 D4）：引擎级新增族，实现全部转发
+# kg_lane/query.py 既有查询面，不触碰上面 <domain>_* 既有工具的契约与行为。
+from .kg_tools import register_kg_tools  # noqa: E402
+
+register_kg_tools(mcp, _err=_err)
+
 
 def main() -> None:  # pragma: no cover
     mcp.run(transport="http", host="0.0.0.0", port=int(os.environ.get("PORT", "8000")))

@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import asyncio
 
-import pytest
 
 from fd_text_core.server import mcp
 
@@ -24,6 +23,8 @@ CODE_CLASS = {
     "NOT_SUPPORTED": "not_wired",
     "FACET_INVALID": "invalid_input",
     "PRESET_INVALID": "invalid_input",
+    # KG 工具族入参非法（如 as_of 不是 ISO8601）——invalid_input 类
+    "KG_INPUT_INVALID": "invalid_input",
 }
 
 

@@ -1,7 +1,8 @@
 """工具行为属性（mcp-tool-annotations）。
 
 工具面由 `server._register(domain)` 按垂域循环生成（当前 gov/papers/screenplay
-× 5 个动词 = 15 个工具）。这里按「垂域 × 动词」声明四项提示，注册时逐工具取
+× 5 个动词 = 15 个工具），外加 KG 车道查询工具族 3 件（`kg_tools.py`，见
+KG_TOOLS）。这里按「垂域 × 动词」声明四项提示，注册时逐工具取
 副本——同一份 dict 被多个工具共享时，任何一处后续改动都会泄漏到别的工具。
 
 **只读**：检索、预设枚举、切块读取、外部联邦检索都只查询既有数据，不写库、
@@ -35,6 +36,11 @@ from .verticals.registry import list_verticals
 
 #: `_register` 生成的动词集（与 server.py 的五个 @mcp.tool 一一对应）。
 VERBS = ("search", "presets", "semantic_search", "federated", "read")
+
+#: KG 车道查询工具族（kg-lane-delivery-v1 D4）：引擎级新增族，不进 `<domain>_*`
+#: 命名空间；工具面固定三件，与 kg_lane 查询面一一对应。只读、幂等、封闭世界
+#: （图是车道批处理产出的版本化工件，同一图版本上同一查询恒得同一批事实）。
+KG_TOOLS = ("kg_search_facts", "kg_walk", "kg_facts_as_of")
 
 #: 只读 + 幂等 + 封闭语料。
 READ_ONLY: dict[str, Any] = {
@@ -73,6 +79,9 @@ def _build() -> dict[str, dict[str, Any]]:
         for verb in VERBS:
             external = verb == "federated" and _has_external_connector(domain)
             out[f"{domain}_{verb}"] = dict(EXTERNAL_READ_ONLY if external else READ_ONLY)
+    # KG 工具族：只读 + 幂等 + 封闭世界（版本化图工件，不出网、不查开放集合）。
+    for name in KG_TOOLS:
+        out[name] = dict(READ_ONLY)
     return out
 
 

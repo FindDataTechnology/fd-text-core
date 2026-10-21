@@ -549,6 +549,75 @@ def test_close_unterminated_leaves_valid_json_untouched():
     assert llm._close_unterminated(raw) == raw
 
 
+# ------------ 未闭合字符串截断修复（kg-lane-delivery-v1 任务 1.3，10-21）
+def test_close_unterminated_string_mid_value():
+    """字符串值中途截断：补闭引号，再按栈逆序补括号（`}]}` 而非 `]}}`）。"""
+    from fd_text_core.kg_lane import llm
+    import json
+
+    raw = '{"entities": [{"name": "最高人'
+    fixed = llm._close_unterminated(raw)
+    assert fixed == '{"entities": [{"name": "最高人"}]}'
+    assert json.loads(fixed)["entities"][0]["name"] == "最高人"
+
+
+def test_close_unterminated_string_cut_right_after_backslash():
+    """截断点恰在反斜杠后：直接补 `"` 会被吃成转义引号，字符串仍未闭合。
+
+    钉死行为：悬挂反斜杠补成完整的 `\\\\`（字面反斜杠，**保留模型原内容**）
+    再闭引号——`"foo\\` 修成 `"foo\\\\"`，解析值为 `foo\\`。
+    """
+    from fd_text_core.kg_lane import llm
+    import json
+
+    raw = '{"name": "foo\\'
+    fixed = llm._close_unterminated(raw)
+    assert fixed == '{"name": "foo\\\\"}'
+    assert json.loads(fixed)["name"] == "foo\\"
+
+
+def test_close_unterminated_string_backslash_pairs_stay_intact():
+    """完整转义（`\\\\`）结尾的**已闭合**字符串不受影响：不额外补反斜杠。
+
+    escaped 状态在消费第二个反斜杠时已复位，不能把成对转义误判成悬挂。
+    """
+    from fd_text_core.kg_lane import llm
+
+    raw = '{"s": "already\\\\"}'
+    assert llm._close_unterminated(raw) == raw
+
+
+def test_close_unterminated_string_inside_nested_array():
+    """嵌套数组里的字符串截断 + 悬挂转义：闭引号后括号仍按栈逆序 `]}]}`。"""
+    from fd_text_core.kg_lane import llm
+    import json
+
+    raw = '{"rows": [[{"v": "x\\'
+    fixed = llm._close_unterminated(raw)
+    assert fixed == '{"rows": [[{"v": "x\\\\"}]]}'
+    assert json.loads(fixed)["rows"][0][0]["v"] == "x\\"
+
+
+def test_parse_llm_json_truncated_after_backslash():
+    """端到端：反斜杠后截断的输入此前整条报废（unparseable），现在必须解析成功。"""
+    parsed = llm.parse_llm_json('{"entities": [{"name": "无锡市扬名\\')
+    assert parsed["entities"][0]["name"] == "无锡市扬名\\"
+
+
+def test_parse_llm_json_truncated_key_name():
+    """键名截断：单独形态（`{"na`）修不出合法值对，走显式报错契约；
+    混合形态（前面有完整键值对）经截断重试收敛到可解析前缀。
+    """
+    with pytest.raises(ValueError):
+        llm.parse_llm_json('{"na')
+
+    # 键没闭合但前缀有完整成员：剥掉残缺成员后仍能还原前面的数据
+    a = llm.parse_llm_json('{"a": 1, "na')
+    assert a == {"a": 1}
+    b = llm.parse_llm_json('{"entities": [{"name": "X"}, {"na')
+    assert b["entities"] == [{"name": "X"}]
+
+
 # ------------------ 超级边抑制与关系类型定向（kg-lane-retrieval-precision 2.2）
 def _edge_t(uuid, fact, src, tgt, rel):
     return query.EdgeRecord(uuid=uuid, fact=fact, name=rel, source_node_uuid=src,

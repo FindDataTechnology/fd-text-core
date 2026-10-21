@@ -139,9 +139,10 @@ def test_merge_plan_groups_isolated_article_nodes():
     names = ["中华人民共和国刑法", "《中华人民共和国刑法》第313条",
              "中华人民共和国刑法第四百二十四条", "中华人民共和国民法典"]
     plan = merge.plan_merge(names)
-    assert "中华人民共和国刑法" in plan
-    assert len(plan["中华人民共和国刑法"]) == 3
-    assert "中华人民共和国民法典" not in plan  # 只有一个名字，不成组
+    # merge_key 现返回元组（幂等硬要求，见 merge.py）
+    assert ("中华人民共和国刑法",) in plan
+    assert len(plan[("中华人民共和国刑法",)]) == 3
+    assert ("中华人民共和国民法典",) not in plan  # 只有一个名字，不成组
 
 
 def test_merge_is_idempotent():

@@ -76,7 +76,7 @@ async def main() -> int:
     settings = lane_mod.settings_from_env()
 
     ledger = cost_mod.CostLedger(settings.cost_ledger_path).load_existing()
-    graphiti = lane_mod.build_graphiti(settings, ledger=ledger)
+    graphiti = lane_mod.build_graphiti(settings, ledger=ledger, config=cfg)
     kg = lane_mod.KGLane(config=cfg, settings=settings, graphiti=graphiti, ledger=ledger)
 
     if args.aggregate_only:

@@ -6,7 +6,7 @@
   "hosting": [
     "shared-instance"
   ],
-  "description": "通用文本处理引擎 MCP：公版经典剧本库（莎士比亚/希腊悲剧/元杂剧/明清传奇）、论文元数据、部委公文三域混合检索（关键词 ⊕ 语义向量）、预设化查询、逐结果溯源。垂域以配置接入（剧本/论文/公文），引擎核心零改动。",
+  "description": "通用文本处理引擎 MCP：公版经典剧本库（莎士比亚/希腊悲剧/元杂剧/明清传奇）、论文元数据、部委公文三域混合检索（关键词 ⊕ 语义向量）、预设化查询、逐结果溯源；KG 车道查询工具族（事实检索/图游走/时点过滤，FalkorDB 时序知识图谱）。垂域以配置接入（剧本/论文/公文），引擎核心零改动。",
   "skills_eligible_for_packs": [
     "screenplay-structure-analysis",
     "screenplay-character-search",
@@ -39,6 +39,24 @@
       "openWorldHint": false
     },
     "gov_semantic_search": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    },
+    "kg_facts_as_of": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    },
+    "kg_search_facts": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    },
+    "kg_walk": {
       "readOnlyHint": true,
       "destructiveHint": false,
       "idempotentHint": true,
@@ -113,6 +131,9 @@
       "gov_read",
       "gov_search",
       "gov_semantic_search",
+      "kg_facts_as_of",
+      "kg_search_facts",
+      "kg_walk",
       "papers_federated",
       "papers_presets",
       "papers_read",
@@ -181,11 +202,25 @@
         "fd_text.corpus_chunks_gov（2160 块，pgvector 1024 维 Qwen3-Embedding-8B + 引擎原生 CJK 分词）"
       ],
       "notes": "语料为部委公开发文（实测发文机关前四位：其他(联合发文/企业/法院等)59、财政部 58、国家发展改革委 36、自然资源部 30；年份跨度 2019-2026）。切块以公文层级（章/条/一、/（一）/1.）为首选边界，section_path 保留层级路径以回答「属于哪一条」。facet 词表为实测分布驱动，词表外机关归「其他」且原值留在 metadata.issuer_raw。公文垂域无外部 connector，gov_federated 按契约返回 NOT_SUPPORTED。检索预设四件：by_number（文号精查）/by_issuer_type（机关+文种）/timeline（政策沿革）/similar（相似段落）。计数以库内实测为权威（2026-10-19：212 篇 / 2160 块）。"
+    },
+    {
+      "group": "kg",
+      "level": "commercial",
+      "tools": [
+        "kg_search_facts",
+        "kg_walk",
+        "kg_facts_as_of"
+      ],
+      "data_sources": [
+        "FalkorDB 时序知识图谱（graphiti 按 group_id 切图；legal / gov 两图，垂域图名由 fd_text_core/kg_lane/verticals/*.kg.json 声明）",
+        "KG 车道批处理产物（scripts/kg_lane_run.py 建图；episode 粒度与准入声明见各垂域 KG 配置）"
+      ],
+      "notes": "KG 车道查询工具族（kg-lane-delivery-v1 D4）：引擎级新增族，不进 <domain>_* 命名空间；实现全部转发 kg_lane/query.py 既有查询面（挂载层零新查询逻辑）。每条返回事实带 provenance 三元组（source/stable_id/as_of，自图内 episode 节点解析）与 valid_at/invalid_at 时效标注；解析不出的溯源进 degraded 如实披露，不伪造。图游走带扇出上限与超级边抑制（抑制原因在 suppressed_relations 披露）。目标图不存在/未建图返回结构化错误（NOT_FOUND + missing_graph），不返回空集冒充「无事实」——FalkorDB 对不存在的图名不报错只返空集，故查询前显式验图。工具族常驻 tools/list（不设运行时开关）；图库未装配/不可达时按 UPSTREAM_UNAVAILABLE 如实报错。"
     }
   ],
   "registry": {
     "entry_path": "/fd-text-core",
     "upstream": "http://cheap6.mesh.finddata.cn:31887/mcp",
-    "expected_tool_count": 15
+    "expected_tool_count": 18
   }
 }

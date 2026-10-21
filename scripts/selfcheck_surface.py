@@ -38,6 +38,10 @@ SERVER_NAME = "fd-text-core"
 TOOL_PATTERN = re.compile(rf"mcp__{SERVER_NAME}__([A-Za-z0-9_.\-]+)")
 VERBS = ("search", "semantic_search", "read", "presets", "federated")
 
+#: KG 车道查询工具族（kg-lane-delivery-v1 D4）：引擎级固定族，不随垂域扩张，
+#: 与 annotations.KG_TOOLS / kg_tools.register_kg_tools 一一对应。
+KG_TOOLS = ("kg_search_facts", "kg_walk", "kg_facts_as_of")
+
 #: 四项行为属性必须一次给全——缺一项客户端就得靠猜自动批准策略。
 REQUIRED_HINTS = ("readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint")
 
@@ -143,11 +147,14 @@ def write_annotations(runtime: dict[str, dict]) -> None:
 
 
 def expected_tools() -> set[str]:
-    """按已加载垂域推导期望工具面（与运行时独立推导，用于双向比对）。"""
+    """按已加载垂域推导期望工具面（与运行时独立推导，用于双向比对）。
+
+    垂域面 = 已加载垂域 × 动词集；KG 族 = 固定三件（引擎级车道，非垂域循环）。
+    """
     sys.path.insert(0, str(REPO))
     from fd_text_core.verticals.registry import list_verticals
 
-    return {f"{d}_{v}" for d in list_verticals() for v in VERBS}
+    return {f"{d}_{v}" for d in list_verticals() for v in VERBS} | set(KG_TOOLS)
 
 
 def consumer_tools(consumers: list[Path]) -> dict[str, set[str]]:

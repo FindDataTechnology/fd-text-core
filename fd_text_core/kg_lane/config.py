@@ -103,6 +103,49 @@ class KGVerticalConfig:
     # 这类「分类标签式」关系会把裸跳数遍历吸走（G-M2 实测返回 175 条同质文种事实）。
     # 法律域关系（审理/援引/废止）度数天然低于 50，不受影响。
     walk_super_edge_threshold: int = 50
+    # 别名词表（可选）：别名 -> 规范名。merge 层在归并前先做整体名精确映射，
+    # 只收无歧义的高频确定性别名（如「最高法」->「最高人民法院」）；
+    # 不带的垂域（如 gov）归并行为不变。
+    alias_lexicon: tuple[tuple[str, str], ...] = ()
+
+    @classmethod
+    def validate_alias_lexicon(cls, lexicon: tuple[tuple[str, str], ...],
+                               name: str = "") -> None:
+        """别名词表校验：条目非法一律 ConfigError，不静默丢弃。
+
+        拒收四类（都违反「无歧义、确定性」的收录前提）：
+          1. 空/非字符串的别名或规范名；
+          2. 别名 == 规范名（自映射无意义，只会掩盖录入错误）；
+          3. 链式映射（某条目的规范名同时是另一条目的别名）——两步映射
+             意味着归并结果依赖映射顺序，不再是确定性的；
+          4. 一个别名映射到多个规范名（同名键重复）。
+        """
+        where = f"config {name!r}: " if name else ""
+        seen_alias: dict[str, str] = {}
+        for alias, canonical in lexicon:
+            if not isinstance(alias, str) or not alias.strip() \
+                    or not isinstance(canonical, str) or not canonical.strip():
+                raise ConfigError(
+                    f"{where}alias_lexicon entries must be non-empty strings: "
+                    f"{alias!r} -> {canonical!r}"
+                )
+            if alias == canonical:
+                raise ConfigError(
+                    f"{where}alias_lexicon self-mapping is meaningless: {alias!r}"
+                )
+            if alias in seen_alias and seen_alias[alias] != canonical:
+                raise ConfigError(
+                    f"{where}alias {alias!r} maps to multiple canonical names: "
+                    f"{seen_alias[alias]!r} and {canonical!r}"
+                )
+            seen_alias[alias] = canonical
+        targets = set(seen_alias.values())
+        chained = sorted(targets & set(seen_alias))
+        if chained:
+            raise ConfigError(
+                f"{where}alias_lexicon must not chain (a canonical name is also "
+                f"an alias): {chained}"
+            )
 
     def validate(self) -> "KGVerticalConfig":
         if not self.name:
@@ -125,6 +168,7 @@ class KGVerticalConfig:
             )
         if not self.corpus.domain:
             raise ConfigError(f"config {self.name!r} must declare corpus.domain")
+        self.validate_alias_lexicon(self.alias_lexicon, self.name)
         self.admission.validate()
         self.granularity.validate()
         return self
@@ -150,11 +194,14 @@ class KGVerticalConfig:
                 "mode": self.granularity.mode,
                 "measured_cost_note": self.granularity.measured_cost_note,
             },
+            "alias_lexicon": dict(self.alias_lexicon),
         }
 
 
 def from_dict(raw: dict[str, Any]) -> KGVerticalConfig:
     """从 dict 构造并校验。缺字段/非法值一律 ConfigError，不静默补默认。"""
+    # 先解析并校验形状：别名词表的错误信息不得被主 try 的类型转换吞掉归因。
+    alias_lexicon = _parse_alias_lexicon(raw.get("alias_lexicon"))
     try:
         entity_types = tuple(
             EntityTypeSpec(name=e["name"], description=e.get("description", ""))
@@ -179,10 +226,34 @@ def from_dict(raw: dict[str, Any]) -> KGVerticalConfig:
             group_id=raw.get("group_id", ""),
             language=raw.get("language", "zh"),
             walk_super_edge_threshold=int(raw.get("walk_super_edge_threshold", 50)),
+            alias_lexicon=alias_lexicon,
         )
     except KeyError as exc:
         raise ConfigError(f"missing required key: {exc}") from exc
     return cfg.validate()
+
+
+def _parse_alias_lexicon(raw: Any) -> tuple[tuple[str, str], ...]:
+    """alias_lexicon 形状校验：{别名: 规范名} 对象，键值都必须是字符串。
+
+    形状不对（列表、标量、嵌套对象）在这里就拒——条目语义校验见
+    :meth:`KGVerticalConfig.validate_alias_lexicon`。
+    """
+    if raw is None:
+        return ()
+    if not isinstance(raw, dict):
+        raise ConfigError(
+            f"alias_lexicon must be an object of {{alias: canonical}}, "
+            f"got {type(raw).__name__}"
+        )
+    out: list[tuple[str, str]] = []
+    for alias, canonical in raw.items():
+        if not isinstance(alias, str) or not isinstance(canonical, str):
+            raise ConfigError(
+                f"alias_lexicon entries must be str->str: {alias!r} -> {canonical!r}"
+            )
+        out.append((alias, canonical))
+    return tuple(out)
 
 
 def load(path: str | Path) -> KGVerticalConfig:

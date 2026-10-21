@@ -60,12 +60,15 @@ def test_all_four_hints_declared_on_every_tool(runtime):
 
 
 def test_tool_count_matches_domain_loop(runtime):
-    """计数 = 已加载垂域 × 每域动词数；新增垂域漏属性会在这里被抓住。"""
+    """计数 = 已加载垂域 × 每域动词数 + KG 工具族；新增垂域漏属性会在这里被抓住。"""
+    from fd_text_core.annotations import KG_TOOLS
+
     domains = list_verticals()
-    assert len(runtime) == len(domains) * len(VERBS), (
-        f"运行时 {len(runtime)} 个工具 ≠ {len(domains)} 垂域 × {len(VERBS)} 动词"
+    expected = {f"{d}_{v}" for d in domains for v in VERBS} | set(KG_TOOLS)
+    assert len(runtime) == len(expected), (
+        f"运行时 {len(runtime)} 个工具 ≠ {len(domains)} 垂域 × {len(VERBS)} 动词 + KG 族 {len(KG_TOOLS)}"
     )
-    assert set(runtime) == {f"{d}_{v}" for d in domains for v in VERBS}
+    assert set(runtime) == expected
 
 
 def test_every_tool_is_read_only(runtime):

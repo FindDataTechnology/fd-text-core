@@ -57,6 +57,21 @@ class QueryBackend(Protocol):
 
     async def get_episode_names(self, uuids: list[str]) -> dict[str, str]: ...
 
+    async def graph_exists(self, group_id: str) -> bool:
+        """目标图存在且非空。
+
+        FalkorDB 对不存在的图名**不报错、只返空集**——查询前不显式验证，
+        「拿错图名」与「图里没有该事实」就不可区分（kg-lane-delivery-v1
+        挂载契约：图缺失必须显式报错，不静默返回空集）。
+        """
+
+    async def get_episodes(self, uuids: list[str]) -> dict[str, dict[str, Any]]:
+        """episode uuid -> {name, source_description, created_at}。
+
+        挂载层补 provenance 三元组（source/stable_id/as_of）的数据源：
+        name 是入图时的 episode_id（稳定标识），created_at 是索引时点。
+        """
+
 
 def parse_dt(value: Any) -> datetime | None:
     """图库时间字段可能是 ISO 字符串（driver 写入前序列化），转回 datetime。"""
@@ -174,6 +189,15 @@ class KGLaneQuery:
 
     async def search_entities(self, name: str) -> list[NodeRecord]:
         return await self.backend.get_nodes_by_name(name, self.group_ids)
+
+    async def graph_ready(self) -> bool:
+        """目标图存在且非空——查询前先验，避免把「图不存在」当成「无事实」。
+
+        FalkorDB 空图陷阱：对不存在的图名，读查询只返空集不报错。挂载层
+        （server 侧 KG 工具族）在转发任何查询前调用本方法，图缺失时返回
+        结构化错误而不是空结果集。
+        """
+        return bool(await self.backend.graph_exists(self.group_ids[0]))
 
     async def search_facts(self, query: str, limit: int = 10,
                            as_of: datetime | None = None) -> list[FactView]:
@@ -361,6 +385,32 @@ class GraphitiQueryBackend:
             gid, uuids=uuids,
         )
         return {rec["uuid"]: rec["name"] for rec in records}
+
+    async def graph_exists(self, group_id: str) -> bool:
+        """图存在且至少有一个节点（任意标签）。
+
+        轻量检查：`LIMIT 1` 命中即返回，不做全图扫描。空图（0 节点）与
+        不存在的图同判 False——两者对查询面都是「未建图」，处置相同
+        （显式报缺，不是静默空集）。连接失败会抛错，由调用方按上游不可用
+        处置，不吞成 False 谎报「图不存在」。
+        """
+        records = await self._query("MATCH (n) RETURN n LIMIT 1", group_id)
+        return len(records) > 0
+
+    async def get_episodes(self, uuids: list[str],
+                           group_id: str | None = None) -> dict[str, dict]:
+        """episode uuid -> {name, source_description, created_at}（挂载层 provenance 数据源）。"""
+        gid = group_id or self._default_group()
+        records = await self._query(
+            """
+            MATCH (e:Episodic) WHERE e.uuid IN $uuids
+            RETURN e.uuid AS uuid, e.name AS name,
+                   e.source_description AS source_description,
+                   e.created_at AS created_at
+            """,
+            gid, uuids=uuids,
+        )
+        return {rec["uuid"]: dict(rec) for rec in records}
 
     def _default_group(self) -> str:
         driver = self.graphiti.driver
