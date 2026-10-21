@@ -376,3 +376,43 @@ def test_facets_and_presets_declared():
     # 预设必须是声明式参数封装（不含 SQL）
     for p in PRESETS.values():
         assert "select" not in str(p.params).lower()
+
+
+# ---------------- 文号与标题交叉校验（kg-lane-retrieval-precision 遗留修复）
+def test_doc_number_prefers_title_number_over_repealed_number():
+    """元数据表的文号有时取到「同时废止」的旧令号（9 行实测）。
+
+    真实案例：财政部令第113号《行政单位财务规则》的发布页，labeled 文号取成了
+    被废止的 71 号，导致索引头与正文标题（113 号）自相矛盾，下游 KG 抽取把
+    113 号的施行日挂到 71 号上。标题是文档自己的封面，权威性最高：二者冲突时
+    以标题为准。
+    """
+    html = """
+    <html><head><title>中华人民共和国财政部令第113号--行政单位财务规则</title></head><body>
+    <table><tr><td>文号</td><td>财政部令第71号</td></tr>
+    <tr><td>发布日期</td><td>2023-01-28</td></tr></table>
+    <div id="UCAPCONTENT">
+    <h1>中华人民共和国财政部令第113号--行政单位财务规则</h1>
+    <p>《行政单位财务规则》已经2023年1月13日部务会议审议通过，现予公布，
+    自2023年3月1日起施行。《行政单位财务规则》（财政部令第71号）同时废止。</p>
+    </div>
+    </body></html>
+    """
+    from fd_text_core.verticals.gov.parser import parse_gov_doc
+
+    doc = parse_gov_doc(html)
+    assert doc.doc_number == "财政部令第113号", doc.doc_number
+
+
+def test_doc_number_kept_when_title_agrees():
+    """标题与元数据表一致时不改写（不得因为校验逻辑引入新误差）。"""
+    html = """
+    <html><head><title>关于发行2026年记账式国债的通知</title></head><body>
+    <table><tr><td>文号</td><td>财办债〔2026〕218号</td></tr></table>
+    <div id="UCAPCONTENT"><h1>关于发行2026年记账式国债的通知</h1></div>
+    </body></html>
+    """
+    from fd_text_core.verticals.gov.parser import parse_gov_doc
+
+    doc = parse_gov_doc(html)
+    assert doc.doc_number == "财办债〔2026〕218号", doc.doc_number

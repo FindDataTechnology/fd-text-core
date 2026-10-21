@@ -488,6 +488,22 @@ def parse_gov_doc(html: str) -> GovDoc:
         if m:
             doc.date = _normalize_date(m.group(0))
 
+    # 文号与标题交叉校验：元数据表的文号偶尔取到「同时废止」的旧令号
+    # （9 行实测，如 113 号发布页 labeled 文号=被废止的 71 号），导致索引头与
+    # 正文标题自相矛盾，下游 KG 抽取把新令的施行日挂到旧令上。
+    # 标题是文档自己的封面，冲突时以标题为准。**只在两侧都是令形态时改写**：
+    # 标题里引用的他文档号（如「关于废止…令第45号的通知」）不得触发改写。
+    # 注意：本块必须放在上面完整的 if/elif/else 日期链**之后**——曾因插进
+    # elif 与 else 之间把悬挂 else 挂到本块上，令日期兜底被错误触发（实测）。
+    if doc.title and doc.doc_number:
+        mt = _RE_NUMBERED_DOC.search(doc.title)
+        md = _RE_NUMBERED_DOC.search(doc.doc_number)
+        if mt and md and mt.group(1) != md.group(1):
+            n_t = re.search(r"第(\d+)号", mt.group(1))
+            n_d = re.search(r"第(\d+)号", md.group(1))
+            if n_t and n_d and n_t.group(1) != n_d.group(1):
+                doc.doc_number = mt.group(1).replace("中华人民共和国", "")
+
     if not doc.issuer:
         doc.issuer = _issuer_from_title(doc.title)
     if not doc.issuer:

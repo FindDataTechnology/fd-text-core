@@ -24,6 +24,13 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest", "pytest-asyncio", "ruff"]
+# KG 车道（fd_text_core/kg_lane）：graphiti 只在车道里用，不进核心依赖——
+# 装不上不能拖垮引擎；核心模块保持零外部 SDK（CI BANNED_IMPORTS 守着）。
+kg = [
+    "graphiti-core==0.31.1",
+    "falkordb>=1.8",
+    "openai>=1.0",
+]
 
 [project.scripts]
 # 2026-10-12 删除 `fd-text-core = "fd_text_core.cli:cli"`：该入口指向的
@@ -44,7 +51,9 @@ include = ["fd_text_core*"]
 # eval/datasets 必须随包走：标注查询集是引擎级评测的输入工件，而 Dockerfile 只
 # COPY fd_text_core/ scripts/ deploy/（tests 不进镜像），故数据集不能放 tests 下
 # —— 否则容器内与质量门都读不到（见 change text-retrieval-eval 的 design D1）。
-fd_text_core = ["data/*.json", "eval/datasets/**/*.json"]
+# kg_lane/verticals 同理：垂域 KG 配置是车道运行的输入工件，不是测试夹具，
+# 缺了它车道在容器里起不来。
+fd_text_core = ["data/*.json", "eval/datasets/**/*.json", "kg_lane/verticals/*.json"]
 
 [tool.ruff]
 line-length = 120
