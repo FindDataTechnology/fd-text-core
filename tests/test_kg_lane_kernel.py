@@ -711,3 +711,35 @@ def test_merge_idempotent_with_doc_numbers():
         "《矿产资源目录》公告2026年第28号",
     ]
     assert merge.is_idempotent(sample)
+
+
+def test_drop_incomplete_items_removes_edge_missing_relation_type():
+    """模型漏 relation_type 时只丢那条边，不让整篇 episode 报废（10-22 实测 2 篇）。"""
+    from pydantic import BaseModel
+
+    from fd_text_core.kg_lane.llm import drop_incomplete_items
+
+    class Edge(BaseModel):
+        relation_type: str
+        fact: str
+
+    class ExtractedEdges(BaseModel):
+        edges: list[Edge]
+
+    data = {"edges": [
+        {"relation_type": "REPEALS", "fact": "废止 71 号"},
+        {"fact": "缺 relation_type 的坏边"},
+        {"relation_type": "AMENDS", "fact": ""},
+        {"relation_type": "EFFECTIVE", "fact": "自 2023-03-01 施行"},
+    ]}
+    out, dropped = drop_incomplete_items(data, ExtractedEdges)
+    assert dropped == 2
+    assert [e["relation_type"] for e in out["edges"]] == ["REPEALS", "EFFECTIVE"]
+
+
+def test_drop_incomplete_items_noop_without_model():
+    from fd_text_core.kg_lane.llm import drop_incomplete_items
+
+    data = {"edges": [{"fact": "x"}]}
+    out, dropped = drop_incomplete_items(data, None)
+    assert dropped == 0 and out == data

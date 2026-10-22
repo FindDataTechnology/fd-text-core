@@ -229,6 +229,49 @@ def parse_llm_json(raw: str, *, list_keys: tuple[str, ...] = ()) -> Any:
     return parsed
 
 
+def drop_incomplete_items(data: Any, response_model: Any) -> tuple[Any, int]:
+    """丢掉列表里缺必填字段的项（**不猜值**），返回 (数据, 丢弃数)。
+
+    实测坑（2026-10-22 重建）：模型偶尔漏写 `relation_type`，
+    `ExtractedEdges` 校验整表失败 → **整篇 episode 报废**（212 篇里 2 篇）。
+    一条坏边远轻于丢一整篇：丢项并记数，让 episode 继续入图。
+
+    只处理「响应模型里有 list 字段、且其元素类型是 pydantic 模型」的情形；
+    必填字段从元素模型取（`is_required()`）。取不到模型信息就原样返回，
+    宁可漏修也不猜字段名。
+    """
+    if response_model is None or not isinstance(data, dict):
+        return data, 0
+    fields = getattr(response_model, "model_fields", None)
+    if not isinstance(fields, dict):
+        return data, 0
+    dropped = 0
+    out = dict(data)
+    for name, info in fields.items():
+        items = out.get(name)
+        if not isinstance(items, list) or not items:
+            continue
+        ann = getattr(info, "annotation", None)
+        args = getattr(ann, "__args__", ())
+        item_model = None
+        for cand in (ann, *args):
+            if hasattr(cand, "model_fields"):
+                item_model = cand
+                break
+        if item_model is None:
+            continue
+        item_fields = getattr(item_model, "model_fields", {})
+        required = [k for k, v in item_fields.items()
+                    if callable(getattr(v, "is_required", None)) and v.is_required()]
+        if not required:
+            continue
+        kept = [it for it in items
+                if isinstance(it, dict) and all(it.get(k) not in (None, "") for k in required)]
+        dropped += len(items) - len(kept)
+        out[name] = kept
+    return out, dropped
+
+
 @dataclass(frozen=True)
 class LLMSettings:
     base_url: str
@@ -327,7 +370,14 @@ def build_llm_client(settings: LLMSettings, client=None, hint_mode: bool = False
                 result = response.choices[0].message.content or ""
                 if not result.strip():
                     raise EmptyResponseError("LLM returned an empty response")
-                return parse_llm_json(result, list_keys=_list_fields(response_model))
+                parsed = parse_llm_json(result, list_keys=_list_fields(response_model))
+                parsed, dropped = drop_incomplete_items(parsed, response_model)
+                if dropped:
+                    # 不静默：丢了几条边要能在日志里查到（整篇失败才是更坏的结果）
+                    logger.warning(
+                        "dropped %d incomplete item(s) from %s response",
+                        dropped, getattr(response_model, "__name__", response_model))
+                return parsed
             except openai.RateLimitError as exc:
                 raise RateLimitError from exc
             except (EmptyResponseError, RateLimitError, ValueError):
