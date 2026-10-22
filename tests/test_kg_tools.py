@@ -43,7 +43,7 @@ class FakeBackend:
     状态——本类里 graph_exists 是唯一真相源，挂载层必须先问它。
     """
 
-    def __init__(self, existing_graphs=("legal",)):
+    def __init__(self, existing_graphs=("legal_v2",)):
         self.existing = set(existing_graphs)
         self.seen_groups: list[str | None] = []
         self.relation_degrees = {"AMENDS": 3, "CITES": 5, "HAS_DOC_TYPE": 212}
@@ -101,7 +101,7 @@ class FakeBackend:
         return self.edges[:limit]
 
     async def search_entities(self, name):  # pragma: no cover - 未被挂载层使用
-        return await self.get_nodes_by_name(name, ["legal"])
+        return await self.get_nodes_by_name(name, ["legal_v2"])
 
     async def get_episode_names(self, uuids, group_id=None):
         return {u: self.episodes[u]["name"] for u in uuids if u in self.episodes}
@@ -153,7 +153,7 @@ def test_kg_search_facts_happy_path(fake_backend):
     data = r.data
     assert data["ok"] is True
     assert data["domain"] == "legal"
-    assert data["graph"] == "legal", "group_id 必须按垂域配置路由（图名=group_id）"
+    assert data["graph"] == "legal_v2", "group_id 必须按垂域配置路由（图名=group_id）"
     assert data["count"] == 2
     for f in data["facts"]:
         _assert_fact_contract(f)
@@ -161,7 +161,7 @@ def test_kg_search_facts_happy_path(fake_backend):
     # 溯源可复现：stable_id 回指图内 episode_id（入图时的稳定标识）
     provs = {p["stable_id"] for f in data["facts"] for p in f["provenance"]}
     assert provs == {"law:刑法:2023修正", "gc:1"}
-    assert fake_backend.seen_groups and set(fake_backend.seen_groups) == {"legal"}
+    assert fake_backend.seen_groups and set(fake_backend.seen_groups) == {"legal_v2"}
 
 
 def test_kg_walk_happy_path_with_suppression(fake_backend):
@@ -221,7 +221,7 @@ def test_missing_graph_returns_structured_error_not_empty(fake_backend):
     assert r.is_error is True, "图缺失必须是失败结果，不能是 ok:true 的空结果"
     err = r.structured_content["error"]
     assert err["code"] == "NOT_FOUND"
-    assert err["missing_graph"] == "gov"
+    assert err["missing_graph"] == "gov_v3"
     assert err["vertical"] == "gov"
     assert "不存在或未建图" in err["message"]
     assert "kg_lane_run.py" in err["message"], "错误要指出缺失依赖的补建路径"
@@ -233,7 +233,7 @@ def test_missing_graph_returns_structured_error_not_empty(fake_backend):
         rr = _call(tool, args)
         assert rr.is_error is True
         assert rr.structured_content["error"]["code"] == "NOT_FOUND"
-        assert rr.structured_content["error"]["missing_graph"] == "gov"
+        assert rr.structured_content["error"]["missing_graph"] == "gov_v3"
 
 
 def test_unknown_vertical_lists_available(fake_backend):

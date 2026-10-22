@@ -59,7 +59,13 @@ _factory_error: str = ""
 
 
 def _default_backend_factory():
-    """默认装配：只读查询后端，不需要 LLM/嵌入凭据（隔离不变量：零 LLM）。"""
+    """默认装配：只读查询后端。
+
+    **嵌入凭据是必需的**：事实检索要先把查询语句嵌入，graphiti 的 `search()`
+    走 `embedder.create()`。不接嵌入通道时 graphiti 会急切构造 `OpenAIEmbedder()`
+    并要求 `OPENAI_API_KEY`，装配直接失败——「只读=不需要凭据」是错的。
+    LLM 凭据仍然不需要：查询路径不调 LLM，给一个调用即报错的桩即可。
+    """
     global _factory_error
     try:
         from graphiti_core import Graphiti  # noqa: F401
@@ -73,12 +79,26 @@ def _default_backend_factory():
     uri = (os.environ.get("LEXKG_FALKORDB_URI") or "").strip() or "bolt://127.0.0.1:6889"
     host, port = parse_uri(uri)
     try:
-        # 查询-only 装配：不接 LLM/嵌入凭据（隔离不变量：挂载层零 LLM）。
         # cross_encoder 必须显式给 noop——graphiti 构造期会急切装配官方
-        # reranker 并要求 OPENAI_API_KEY（试点教训，见 lane.build_graphiti）；
-        # llm_client/embedder 传 None 交由其「用到才解析」路径，若某版本在
-        # 构造期强求，捕获后如实降级（真实图联调时在此补 stub）。
+        # reranker 并要求 OPENAI_API_KEY（试点教训，见 lane.build_graphiti）。
+        from .kg_lane import embedding as emb_mod
         from .kg_lane.lane import _NoopCrossEncoder
+
+        embed_base = (os.environ.get("LEXKG_EMBED_BASE_URL") or "").strip()
+        embed_key = (os.environ.get("LEXKG_EMBED_API_KEY") or "").strip()
+        if not (embed_base and embed_key):
+            _factory_error = (
+                "查询面需要嵌入通道：缺 LEXKG_EMBED_BASE_URL / LEXKG_EMBED_API_KEY"
+                "（事实检索要嵌入查询语句）"
+            )
+            return None
+        embedder = emb_mod.build_embedder(emb_mod.EmbeddingSettings(
+            base_url=embed_base,
+            api_key=embed_key,
+            model=(os.environ.get("LEXKG_EMBED_MODEL") or "").strip() or emb_mod.DEFAULT_MODEL,
+            dim=int(os.environ.get("LEXKG_EMBED_DIM") or emb_mod.DEFAULT_DIM),
+            provider_only=(os.environ.get("LEXKG_EMBED_PROVIDER_ONLY") or "").strip(),
+        ))
 
         creds = {}
         if (os.environ.get("LEXKG_FALKORDB_USERNAME") or "").strip():
@@ -86,12 +106,33 @@ def _default_backend_factory():
         if (os.environ.get("LEXKG_FALKORDB_PASSWORD") or "").strip():
             creds["password"] = os.environ["LEXKG_FALKORDB_PASSWORD"].strip()
         graphiti = Graphiti(graph_driver=FalkorDriver(host=host, port=port, **creds),
-                            llm_client=None, embedder=None,
+                            llm_client=_read_only_llm_stub(), embedder=embedder,
                             cross_encoder=_NoopCrossEncoder())
         return GraphitiQueryBackend(graphiti)
     except Exception as exc:  # noqa: BLE001 - 装配失败必须降级为显式错误，不崩服务
         _factory_error = f"图库后端装配失败：{type(exc).__name__}: {exc}"
         return None
+
+
+def _read_only_llm_stub():
+    """查询面用的空 LLM：任何抽取调用都立刻报错。
+
+    为什么必须有：graphiti 0.31.1 的 `Graphiti.__init__` 在 `llm_client=None` 时
+    **急切构造** `OpenAIClient()`（要求 OPENAI_API_KEY），并不会「用到才解析」。
+    查询路径不调 LLM（隔离不变量：挂载层零 LLM 抽取），故给一个继承官方基类、
+    `_generate_response` 直接抛错的桩：既满足构造期 `set_tracer` 等协议，
+    又能在真的被调用时立刻暴露，而不是静默走外部模型。
+    """
+    from graphiti_core.llm_client.client import LLMClient
+
+    class _ReadOnlyLLMStub(LLMClient):
+        async def _generate_response(self, *args, **kwargs):
+            raise RuntimeError(
+                "KG 查询面不调用 LLM：这是一次不该发生的抽取调用"
+                "（只读后端只做检索；若在查询路径触发，说明 graphiti 的调用图变了）"
+            )
+
+    return _ReadOnlyLLMStub(config=None)
 
 
 def _backend_or_error(_err):
@@ -230,6 +271,21 @@ def register_kg_tools(mcp_instance, _err) -> None:
             )
         return surface, group_id, None
 
+    async def _run(coro):
+        """执行查询并把上游故障映射成结构化错误。
+
+        为什么必须：嵌入网关/图库故障会以裸异常抛给调用方（实测嵌入网关 502
+        直接变成 MCP 工具异常），调用方拿不到错误码，也分不清「没命中」与
+        「上游挂了」——这两件事对消费方是完全不同的处置。
+        """
+        try:
+            return await coro, None
+        except Exception as exc:  # noqa: BLE001 - 上游故障统一降级为显式错误
+            return None, _err(
+                "UPSTREAM_UNAVAILABLE",
+                f"KG 查询失败（上游不可用）：{type(exc).__name__}: {exc}",
+            )
+
     @mcp_instance.tool(
         name="kg_search_facts",
         description="KG 车道：按自然语言查询事实（实体/关系检索），每条带 provenance 与时效标注",
@@ -239,9 +295,13 @@ def register_kg_tools(mcp_instance, _err) -> None:
         surface, group_id, err_res = await _surface(domain, _err)
         if err_res is not None:
             return err_res
-        facts = await surface.search_facts(query, limit=limit)
+        facts, err_res = await _run(surface.search_facts(query, limit=limit))
+        if err_res is not None:
+            return err_res
         degraded: list[str] = []
-        rows = await _decorate_facts(facts, surface, domain, degraded)
+        rows, err_res = await _run(_decorate_facts(facts, surface, domain, degraded))
+        if err_res is not None:
+            return err_res
         return _ok({"domain": domain, "graph": group_id, "facts": rows,
                     "count": len(rows), "degraded": degraded})
 
@@ -255,12 +315,16 @@ def register_kg_tools(mcp_instance, _err) -> None:
         surface, group_id, err_res = await _surface(domain, _err)
         if err_res is not None:
             return err_res
-        facts = await surface.walk(
+        facts, err_res = await _run(surface.walk(
             start, max_hops=max_hops,
             relation_types=tuple(relation_types) if relation_types else None,
-        )
+        ))
+        if err_res is not None:
+            return err_res
         degraded: list[str] = []
-        rows = await _decorate_facts(facts, surface, domain, degraded)
+        rows, err_res = await _run(_decorate_facts(facts, surface, domain, degraded))
+        if err_res is not None:
+            return err_res
         return _ok({
             "domain": domain, "graph": group_id, "facts": rows, "count": len(rows),
             "degraded": degraded,
@@ -291,8 +355,12 @@ def register_kg_tools(mcp_instance, _err) -> None:
         # naive 与 aware 直接比较会 TypeError 而不是过滤
         if at.tzinfo is None:
             at = at.replace(tzinfo=timezone.utc)
-        facts = await surface.search_facts(query, limit=limit, as_of=at)
+        facts, err_res = await _run(surface.search_facts(query, limit=limit, as_of=at))
+        if err_res is not None:
+            return err_res
         degraded: list[str] = []
-        rows = await _decorate_facts(facts, surface, domain, degraded)
+        rows, err_res = await _run(_decorate_facts(facts, surface, domain, degraded))
+        if err_res is not None:
+            return err_res
         return _ok({"domain": domain, "graph": group_id, "as_of": at.isoformat(),
                     "facts": rows, "count": len(rows), "degraded": degraded})
