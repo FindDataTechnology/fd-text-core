@@ -127,6 +127,18 @@ def bootstrap_defaults() -> None:
             language="zh",
             display="公文",
         ),
+        Vertical(
+            name="news",
+            strategy=SlidingWindow(target=800, max_size=1500),
+            facets={
+                "source_type": frozenset({"announcement", "ministry", "interaction"}),
+                "lang": frozenset({"zh", "en"}),
+                "has_body": frozenset({"true", "false"}),
+            },
+            tsv_config="simple",
+            language="zh",
+            display="资讯",
+        ),
     ):
         if v.name not in _REGISTRY:
             register(v)
