@@ -18,10 +18,9 @@ spec:
       containers:
         - name: fd-text-core
           # 快照 sha（通用构建池 testaction005/build-pool 线）——
-          # 对应真源 263155c（KG 车道挂载 + 图库/嵌入凭据 + 镜像装 kg extra，
-          # change kg-lane-delivery-v1 收尾）。2026-10-22 出片。
-          # 上一版 sha-3283213 对应真源 39b1188（2026-10-19）。
-          image: ccr.ccs.tencentyun.com/finddata/fd-text-core:sha-1806fe5
+          # 对应真源 dfe0091（263155c 全部内容 + 嵌入客户端瞬时故障重试）。
+          # 2026-10-22 出片。上一版 sha-1806fe5 对应真源 263155c。
+          image: ccr.ccs.tencentyun.com/finddata/fd-text-core:sha-6d025e3
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
