@@ -20,7 +20,7 @@ spec:
           # 快照 sha（通用构建池 testaction005/build-pool 线）——
           # 对应真源 dfe0091（263155c 全部内容 + 嵌入客户端瞬时故障重试）。
           # 2026-10-22 出片。上一版 sha-1806fe5 对应真源 263155c。
-          image: ccr.ccs.tencentyun.com/finddata/fd-text-core:sha-6d025e3
+          image: ccr.ccs.tencentyun.com/finddata/fd-text-core:sha-a1ad54c
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
