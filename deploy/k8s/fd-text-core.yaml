@@ -17,11 +17,11 @@ spec:
     spec:
       containers:
         - name: fd-text-core
-          # 快照 sha（通用构建池 testaction001/build-pool 线）——
-          # 对应真源 39b1188（gov 恢复注册 + --eval-all 修崩溃，change
-          # fix-text-core-gov-surface）。2026-10-19 出片。
-          # 上一版 sha-3a4ec40 对应真源 d118d8b（2026-10-11），落后 20 个提交。
-          image: ccr.ccs.tencentyun.com/finddata/fd-text-core:sha-3283213
+          # 快照 sha（通用构建池 testaction005/build-pool 线）——
+          # 对应真源 263155c（KG 车道挂载 + 图库/嵌入凭据 + 镜像装 kg extra，
+          # change kg-lane-delivery-v1 收尾）。2026-10-22 出片。
+          # 上一版 sha-3283213 对应真源 39b1188（2026-10-19）。
+          image: ccr.ccs.tencentyun.com/finddata/fd-text-core:sha-1806fe5
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
