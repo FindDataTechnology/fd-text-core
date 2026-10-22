@@ -120,13 +120,17 @@ def main() -> int:
     ap.add_argument("--falkordb-uri", required=True)
     ap.add_argument("--group-id", required=True)
     ap.add_argument("--apply", action="store_true", help="真正写图（默认 dry-run）")
+    ap.add_argument("--username", default=os.environ.get("LEXKG_FALKORDB_USERNAME", ""))
+    ap.add_argument("--password", default=os.environ.get("LEXKG_FALKORDB_PASSWORD", ""))
     ap.add_argument("--report-out", default="")
     args = ap.parse_args()
 
     from falkordb import FalkorDB
 
     host, port = sl.parse_uri(args.falkordb_uri)
-    graph = FalkorDB(host=host, port=port).select_graph(args.group_id)
+    creds = {k: v for k, v in
+             (("username", args.username), ("password", args.password)) if v}
+    graph = FalkorDB(host=host, port=port, **creds).select_graph(args.group_id)
 
     dirty = find_dirty(graph)
     report: dict = {"group_id": args.group_id, "dirty": len(dirty), "applied": False,
@@ -176,7 +180,9 @@ def main() -> int:
         report["embedding"] = {"reason": "LEXKG_EMBED_* missing — skipped"}
         print("embedding skipped (no LEXKG_EMBED_* config)")
 
-    writer = sl.StatuteGraphWriter(args.falkordb_uri, args.group_id).connect()
+    writer = sl.StatuteGraphWriter(args.falkordb_uri, args.group_id,
+                                   username=args.username,
+                                   password=args.password).connect()
     counts = writer.upsert_plan(plan)
     report.update({"applied": True, "rewritten": counts})
     print(f"rewritten: {counts}")

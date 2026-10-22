@@ -188,7 +188,11 @@ def main(argv: list[str] | None = None) -> int:
 
     written = None
     if not args.dry_run:
-        writer = sl.StatuteGraphWriter(args.falkordb_uri, args.group_id).connect()
+        writer = sl.StatuteGraphWriter(
+            args.falkordb_uri, args.group_id,
+            username=(os.environ.get("LEXKG_FALKORDB_USERNAME") or "").strip(),
+            password=(os.environ.get("LEXKG_FALKORDB_PASSWORD") or "").strip(),
+        ).connect()
         written = writer.upsert_plan(plan)
         print(f"upserted: {written}")
 

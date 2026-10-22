@@ -23,6 +23,8 @@ class LaneSettings:
     llm: llm_mod.LLMSettings
     embedding: emb_mod.EmbeddingSettings
     falkor_uri: str = "bolt://127.0.0.1:6889"
+    falkor_username: str = ""
+    falkor_password: str = ""
     cost_ledger_path: str = "data/kg_cost_ledger.jsonl"
     semaphore_limit: int = 5
     fanout_cap: int = 200
@@ -56,6 +58,8 @@ def settings_from_env(env: dict[str, str] | None = None) -> LaneSettings:
             provider_only=(e.get("LEXKG_EMBED_PROVIDER_ONLY") or "").strip(),
         ),
         falkor_uri=(e.get("LEXKG_FALKORDB_URI") or "").strip() or "bolt://127.0.0.1:6889",
+        falkor_username=(e.get("LEXKG_FALKORDB_USERNAME") or "").strip(),
+        falkor_password=(e.get("LEXKG_FALKORDB_PASSWORD") or "").strip(),
         cost_ledger_path=(e.get("LEXKG_COST_LEDGER_PATH") or "").strip()
         or "data/kg_cost_ledger.jsonl",
         semaphore_limit=int(e.get("LEXKG_SEMAPHORE_LIMIT") or 5),
@@ -89,7 +93,13 @@ def build_graphiti(settings: LaneSettings, *, llm_client: Any = None,
     from graphiti_core.driver.falkordb_driver import FalkorDriver
 
     host, port = parse_uri(settings.falkor_uri)
-    driver = FalkorDriver(host=host, port=port)
+    # 凭据只在显式配置时下发（本地嵌入式实例无鉴权）；远端实例必须带 requirepass
+    creds = {}
+    if settings.falkor_username:
+        creds["username"] = settings.falkor_username
+    if settings.falkor_password:
+        creds["password"] = settings.falkor_password
+    driver = FalkorDriver(host=host, port=port, **creds)
 
     if llm_client is None:
         llm_client = llm_mod.build_llm_client(settings.llm, ledger=ledger)

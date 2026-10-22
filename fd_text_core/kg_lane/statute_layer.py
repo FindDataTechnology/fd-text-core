@@ -1007,17 +1007,29 @@ SET r.name = row.name, r.fact = row.fact, r.group_id = row.group_id,
     r.expired_at = row.expired_at, r.reference_time = row.reference_time
 """.strip()
 
-    def __init__(self, uri: str, group_id: str):
+    def __init__(self, uri: str, group_id: str, *, username: str = "",
+                 password: str = ""):
         self.uri = uri
         self.group_id = group_id
+        self.username = username
+        self.password = password
         self._graph: Any = None
 
     def connect(self) -> "StatuteGraphWriter":
-        """建立 bolt 连接并显式 select_graph(group_id)。"""
+        """建立 bolt 连接并显式 select_graph(group_id)。
+
+        远端实例带 `requirepass` 时必须给 username/password（graphiti 的
+        FalkorDriver 支持同组参数，两侧口径一致）。
+        """
         from falkordb import FalkorDB  # 懒加载：测试环境无 falkordb 服务
 
         host, port = parse_uri(self.uri)
-        self._graph = FalkorDB(host=host, port=port).select_graph(self.group_id)
+        creds = {}
+        if self.username:
+            creds["username"] = self.username
+        if self.password:
+            creds["password"] = self.password
+        self._graph = FalkorDB(host=host, port=port, **creds).select_graph(self.group_id)
         return self
 
     def _run(self, cypher: str, params: dict[str, Any]) -> None:

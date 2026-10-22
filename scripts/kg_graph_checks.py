@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 
@@ -68,12 +69,16 @@ def main() -> int:
     ap.add_argument("graphs", nargs="*", default=["legal_v2", "gov_v3"])
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=6889)
+    ap.add_argument("--username", default=os.environ.get("LEXKG_FALKORDB_USERNAME", ""))
+    ap.add_argument("--password", default=os.environ.get("LEXKG_FALKORDB_PASSWORD", ""))
     ap.add_argument("--json-out", default="")
     args = ap.parse_args()
 
     from falkordb import FalkorDB
 
-    db = FalkorDB(host=args.host, port=args.port)
+    creds = {k: v for k, v in
+             (("username", args.username), ("password", args.password)) if v}
+    db = FalkorDB(host=args.host, port=args.port, **creds)
     results = [check_graph(db, gid) for gid in args.graphs]
     if args.json_out:
         with open(args.json_out, "w", encoding="utf-8") as fh:

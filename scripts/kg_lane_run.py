@@ -56,7 +56,7 @@ async def drop_graph(graphiti, group_id: str) -> None:
         print(f"drop graph {group_id}: {exc!r} (ignored)")
 
 
-def snapshot(uri: str) -> str:
+def snapshot(uri: str, *, username: str = "", password: str = "") -> str:
     """对图实例做一次 BGSAVE（零持久化实例唯一的数据保全手段）。
 
     为什么必须有：zihan 的 FalkorDB 是 `save` 空、AOF 关的零持久化实例
@@ -67,8 +67,14 @@ def snapshot(uri: str) -> str:
     from falkordb import FalkorDB  # 懒加载：单测环境无图库依赖
 
     host, port = lane_mod.parse_uri(uri)
+    creds = {}
+    if username:
+        creds["username"] = username
+    if password:
+        creds["password"] = password
     try:
-        return str(FalkorDB(host=host, port=port).connection.execute_command("BGSAVE"))
+        return str(FalkorDB(host=host, port=port, **creds)
+                   .connection.execute_command("BGSAVE"))
     except Exception as exc:  # noqa: BLE001
         return f"BGSAVE failed: {exc!r}"
 
@@ -147,10 +153,13 @@ async def main() -> int:
             print(f"[{i}/{len(pending)}] FAIL {ep['episode_id']}: {exc!r}", flush=True)
         if args.bgsave_every and ok_since_snap >= args.bgsave_every:
             ok_since_snap = 0
-            print(f"  BGSAVE @ {len(state['done'])} done: {snapshot(snap_uri)}", flush=True)
+            print(f"  BGSAVE @ {len(state['done'])} done: "
+                  f"{snapshot(snap_uri, username=settings.falkor_username, password=settings.falkor_password)}",
+                  flush=True)
 
     if args.bgsave_every and ok_since_snap:
-        print(f"  BGSAVE(final) @ {len(state['done'])} done: {snapshot(snap_uri)}",
+        print(f"  BGSAVE(final) @ {len(state['done'])} done: "
+              f"{snapshot(snap_uri, username=settings.falkor_username, password=settings.falkor_password)}",
               flush=True)
 
     await graphiti.close()

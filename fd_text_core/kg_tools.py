@@ -80,7 +80,12 @@ def _default_backend_factory():
         # 构造期强求，捕获后如实降级（真实图联调时在此补 stub）。
         from .kg_lane.lane import _NoopCrossEncoder
 
-        graphiti = Graphiti(graph_driver=FalkorDriver(host=host, port=port),
+        creds = {}
+        if (os.environ.get("LEXKG_FALKORDB_USERNAME") or "").strip():
+            creds["username"] = os.environ["LEXKG_FALKORDB_USERNAME"].strip()
+        if (os.environ.get("LEXKG_FALKORDB_PASSWORD") or "").strip():
+            creds["password"] = os.environ["LEXKG_FALKORDB_PASSWORD"].strip()
+        graphiti = Graphiti(graph_driver=FalkorDriver(host=host, port=port, **creds),
                             llm_client=None, embedder=None,
                             cross_encoder=_NoopCrossEncoder())
         return GraphitiQueryBackend(graphiti)
