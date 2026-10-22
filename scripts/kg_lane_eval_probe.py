@@ -15,6 +15,7 @@ import argparse
 import asyncio
 import json
 import sys
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -60,8 +61,14 @@ async def main() -> int:
     with out.open("w", encoding="utf-8") as fh:
         for q in questions:
             evidence: list[dict] = []
+            as_of = None
+            if q.as_of:
+                try:
+                    as_of = datetime.fromisoformat(q.as_of)
+                except ValueError:
+                    evidence.append({"error": f"as_of 不是合法 ISO8601: {q.as_of!r}"})
             try:
-                facts = await kg.query_surface().search_facts(q.query, limit=8)
+                facts = await kg.query_surface().search_facts(q.query, limit=8, as_of=as_of)
                 evidence.extend(f.to_dict() for f in facts)
                 # 多跳题补二跳链条：从命中事实的主体出发游走
                 if q.kind == "multihop" and facts:
@@ -76,6 +83,7 @@ async def main() -> int:
                 evidence.append({"error": f"{type(exc).__name__}: {exc}"})
             row = {
                 "id": q.id, "kind": q.kind, "query": q.query,
+                "as_of": q.as_of or None,
                 "expectation": q.expectation, "verdict_rule": q.verdict_rule,
                 "kg_evidence": evidence,
                 "verdict": None,  # 人工评阅位

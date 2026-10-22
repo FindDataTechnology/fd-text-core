@@ -34,9 +34,28 @@ def _is_dirty(node_name: str) -> bool:
     return is_dirty_name(node_name)
 
 
+def _all_names(g, page: int = 5000) -> list[str]:
+    """分页取全部节点名。
+
+    **不能只发一次 `MATCH (n) RETURN n.name`**：FalkorDB 的 resultset_size 默认
+    10000，多出的行被静默截断——判据①④会只查前一万个节点却报 PASS。
+    ORDER BY uuid 让分页确定（uuid 有 range 索引），图静态时结果完整。
+    """
+    out: list[str] = []
+    skip = 0
+    while True:
+        rows = g.query(
+            f"MATCH (n) RETURN n.name ORDER BY n.uuid SKIP {skip} LIMIT {page}"
+        ).result_set
+        out.extend(r[0] or "" for r in rows)
+        if len(rows) < page:
+            return out
+        skip += page
+
+
 def check_graph(db, gid: str) -> dict:
     g = db.select_graph(gid)
-    names = [r[0] or "" for r in g.query("MATCH (n) RETURN n.name").result_set]
+    names = _all_names(g)
     edges = g.query("MATCH ()-[r]->() RETURN count(r)").result_set[0][0]
     statute = g.query(
         "MATCH (n:Entity) WHERE n.law_id IS NOT NULL RETURN count(n)").result_set[0][0]

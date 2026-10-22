@@ -17,7 +17,7 @@ live 实现是 `GraphitiQueryBackend`。
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Protocol
 
 DEFAULT_FANOUT_CAP = 200
@@ -83,11 +83,22 @@ def parse_dt(value: Any) -> datetime | None:
         return None
 
 
+def _as_utc(dt: datetime) -> datetime:
+    """无时区的输入按 UTC 解释。
+
+    图里的 valid_at/invalid_at 一律带时区（graphiti 写 UTC）。调用方常传日期串
+    （评测题的 `2024-01-01`）解析出的 naive datetime，直接比较会抛
+    `can't compare offset-naive and offset-aware datetimes`。
+    """
+    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+
+
 def fact_valid_at(edge: EdgeRecord, at: datetime) -> bool:
     """事实在 at 时刻为真：valid_at <= at < invalid_at；None 表示开放端。"""
-    if edge.valid_at is not None and at < edge.valid_at:
+    at = _as_utc(at)
+    if edge.valid_at is not None and at < _as_utc(edge.valid_at):
         return False
-    if edge.invalid_at is not None and at >= edge.invalid_at:
+    if edge.invalid_at is not None and at >= _as_utc(edge.invalid_at):
         return False
     return True
 

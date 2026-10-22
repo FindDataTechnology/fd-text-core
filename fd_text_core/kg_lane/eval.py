@@ -29,6 +29,9 @@ class EvalQuestion:
     query: str
     expectation: str = ""
     verdict_rule: str = ""
+    # 时点题的评阅时点（ISO8601）。有值则 KG 侧按 valid_at<=as_of<invalid_at 过滤；
+    # 不填就无法真正执行「按 valid_at 过滤后作答」这条 verdict_rule。
+    as_of: str = ""
 
 
 def load_questions(path: str) -> list[EvalQuestion]:
@@ -48,6 +51,7 @@ def load_questions(path: str) -> list[EvalQuestion]:
                 id=item["id"], kind=kind, query=item["query"],
                 expectation=item.get("expectation", ""),
                 verdict_rule=item.get("verdict_rule", ""),
+                as_of=item.get("as_of", ""),
             )
         )
     return out

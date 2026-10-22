@@ -279,6 +279,13 @@ def test_fact_valid_at_open_ended():
     assert not query.fact_valid_at(e, datetime(2019, 1, 1, tzinfo=timezone.utc))
 
 
+def test_fact_valid_at_accepts_naive_as_of():
+    """评测题的 as_of 常是裸日期（naive），不能因此抛 TypeError。"""
+    e = _edge("x", "f", "a", "b", valid_at=datetime(2020, 1, 1, tzinfo=timezone.utc))
+    assert query.fact_valid_at(e, datetime(2021, 1, 1))          # naive 按 UTC
+    assert not query.fact_valid_at(e, datetime(2019, 1, 1))
+
+
 class _CloningDriver:
     """只有 clone 到正确图才有数据——模拟 graphiti 的按 group 切图。"""
 
@@ -387,6 +394,17 @@ def test_load_questions_accepts_list_and_wrapper(tmp_path):
     p2 = tmp_path / "b.json"
     p2.write_text(json.dumps({"questions": qs}))
     assert lane_eval.load_questions(str(p2))[0].id == "a"
+
+
+def test_load_questions_reads_as_of(tmp_path):
+    """时点题的 as_of 必须进 EvalQuestion——否则「按 valid_at 过滤」无法执行。"""
+    qs = [{"id": "a", "kind": "temporal", "query": "q", "as_of": "2020-06-01"},
+          {"id": "b", "kind": "temporal", "query": "q"}]
+    p = tmp_path / "q.json"
+    p.write_text(json.dumps({"questions": qs}))
+    got = lane_eval.load_questions(str(p))
+    assert got[0].as_of == "2020-06-01"
+    assert got[1].as_of == ""
 
 
 def test_report_jsonl_roundtrip(tmp_path):
