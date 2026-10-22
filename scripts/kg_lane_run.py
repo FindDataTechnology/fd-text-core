@@ -92,6 +92,9 @@ async def main() -> int:
                     help="每 N 条成功 episode 做一次 BGSAVE（0=关闭）")
     ap.add_argument("--bgsave-uri", default="",
                     help="图实例地址，默认取 LEXKG_FALKORDB_URI")
+    ap.add_argument("--episode-concurrency", type=int, default=1,
+                    help="同时处理的 episode 篇数（默认 1=逐篇串行）。"
+                         "LEXKG_SEMAPHORE_LIMIT 只并行单篇内部调用，不并行篇与篇")
     args = ap.parse_args()
 
     cfg_path = args.config or (
@@ -127,35 +130,58 @@ async def main() -> int:
     from datetime import datetime
 
     snap_uri = args.bgsave_uri or settings.falkor_uri
+    conc = max(1, args.episode_concurrency)
+    sem = asyncio.Semaphore(conc)
+    gate = asyncio.Lock()          # 只保护状态写入与计数，不覆盖 await 图写入
+    done_n = 0
     ok_since_snap = 0
     t0 = time.time()
-    for i, ep in enumerate(pending, 1):
+
+    async def run_one(ep: dict) -> None:
+        """处理单篇：失败只记账不抛出（与串行路径同口径）。"""
+        nonlocal done_n, ok_since_snap
         ref = ep.get("valid_at") or ep.get("provenance", {}).get("as_of")
         try:
             ref_dt = datetime.fromisoformat(ref) if ref else datetime.now().astimezone()
         except ValueError:
             ref_dt = datetime.now().astimezone()
-        try:
-            await kg.add_episode(
-                name=ep["episode_id"],
-                body=ep["content"],
-                reference_time=ref_dt,
-                source_description=f"corpus:{cfg.corpus.domain}:{ep.get('kind', '')}",
-            )
-            state["done"].append(ep["episode_id"])
-            save_state(args.state, state)
-            ok_since_snap += 1
-            print(f"[{i}/{len(pending)}] OK {ep['episode_id']} "
-                  f"({len(ep['content'])} ch) {(time.time() - t0) / i:.1f}s/ep avg", flush=True)
-        except Exception as exc:  # noqa: BLE001 - 逐条容错，失败记录后继续
-            state["failed"].append({"id": ep["episode_id"], "error": str(exc)[:300]})
-            save_state(args.state, state)
-            print(f"[{i}/{len(pending)}] FAIL {ep['episode_id']}: {exc!r}", flush=True)
-        if args.bgsave_every and ok_since_snap >= args.bgsave_every:
-            ok_since_snap = 0
-            print(f"  BGSAVE @ {len(state['done'])} done: "
-                  f"{snapshot(snap_uri, username=settings.falkor_username, password=settings.falkor_password)}",
-                  flush=True)
+        async with sem:
+            snap_now = False
+            try:
+                await kg.add_episode(
+                    name=ep["episode_id"],
+                    body=ep["content"],
+                    reference_time=ref_dt,
+                    source_description=f"corpus:{cfg.corpus.domain}:{ep.get('kind', '')}",
+                )
+                async with gate:
+                    state["done"].append(ep["episode_id"])
+                    save_state(args.state, state)
+                    done_n += 1
+                    ok_since_snap += 1
+                    n, avg = done_n, (time.time() - t0) / done_n
+                    if args.bgsave_every and ok_since_snap >= args.bgsave_every:
+                        ok_since_snap = 0
+                        snap_now = True
+                print(f"[{n}/{len(pending)}] OK {ep['episode_id']} "
+                      f"({len(ep['content'])} ch) {avg:.1f}s/ep avg", flush=True)
+            except Exception as exc:  # noqa: BLE001 - 逐条容错，失败记录后继续
+                async with gate:
+                    state["failed"].append(
+                        {"id": ep["episode_id"], "error": str(exc)[:300]})
+                    save_state(args.state, state)
+                print(f"FAIL {ep['episode_id']}: {exc!r}", flush=True)
+            if snap_now:  # 快照在锁外做（BGSAVE 是重 IO，不该挡住别的篇）
+                print(f"  BGSAVE @ {len(state['done'])} done: "
+                      f"{snapshot(snap_uri, username=settings.falkor_username, password=settings.falkor_password)}",
+                      flush=True)
+
+    if conc == 1:
+        for ep in pending:
+            await run_one(ep)
+    else:
+        print(f"episode concurrency = {conc}", flush=True)
+        await asyncio.gather(*(run_one(ep) for ep in pending))
 
     if args.bgsave_every and ok_since_snap:
         print(f"  BGSAVE(final) @ {len(state['done'])} done: "
