@@ -119,6 +119,51 @@ async def test_provider_pin_only_when_configured():
     assert fake2.calls[0]["extra_body"] == {"provider": {"only": ["Nebius"]}}
 
 
+async def test_embedder_retries_transient_5xx(monkeypatch):
+    """网关上游会抖（单次 502 后紧接 200）——瞬时错误必须重试，一次就挂不可接受。"""
+    import asyncio as _asyncio
+
+    e, fake = _embedder(dim=8)
+
+    async def _no_sleep(_s):  # 测试不真等退避
+        return None
+
+    monkeypatch.setattr(_asyncio, "sleep", _no_sleep)
+    calls = {"n": 0}
+    real_create = _FakeEmbeddings.create
+
+    async def flaky(**kwargs):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise RuntimeError("500 upsteam blip")
+        return await real_create(fake, **kwargs)
+
+    fake.create = flaky
+    vec = await e.create("文本")
+    assert calls["n"] == 3 and len(vec) == 8
+
+
+async def test_embedder_does_not_retry_client_errors():
+    """4xx（配错/欠费）重试没有意义，必须立刻抛。"""
+
+    e, fake = _embedder(dim=8)
+    calls = {"n": 0}
+
+    def err(status_code):
+        ex = RuntimeError("client error")
+        ex.status_code = status_code
+        return ex
+
+    async def bad(**kwargs):
+        calls["n"] += 1
+        raise err(401)
+
+    fake.create = bad
+    with pytest.raises(RuntimeError):
+        await e.create("文本")
+    assert calls["n"] == 1
+
+
 # -------------------------------------------------------------------- cost
 
 def test_ledger_records_and_aggregates(tmp_path):

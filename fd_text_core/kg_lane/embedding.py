@@ -25,6 +25,32 @@ class EmbeddingDimensionError(ValueError):
     """上游返回维度与配置不符（多半是上游忽略了 dimensions）。"""
 
 
+#: 上游瞬时故障（5xx/超时/连接断）的重试参数。
+#: 网关的上游会抖（2026-10-22 实测：单次 502 后紧接一次 200），一次失败就
+#: 让整条调用挂掉不可接受；但长退避会拖死查询面，3 次短退避正好。
+RETRY_ATTEMPTS = 3
+RETRY_BASE_SECONDS = 1.0
+
+
+async def _with_retry(call):
+    """5xx/超时/连接类错误短退避重试；4xx（配错/欠费）立刻抛。"""
+    import asyncio
+
+    last: Exception | None = None
+    for attempt in range(1, RETRY_ATTEMPTS + 1):
+        try:
+            return await call()
+        except Exception as exc:  # noqa: BLE001 - 按类型/状态码判可重试性
+            status = getattr(exc, "status_code", None) or getattr(
+                getattr(exc, "response", None), "status_code", None)
+            retryable = status is None or status >= 500
+            if not retryable or attempt == RETRY_ATTEMPTS:
+                raise
+            last = exc
+            await asyncio.sleep(RETRY_BASE_SECONDS * 2 ** (attempt - 1))
+    raise last  # pragma: no cover - 循环必在 return 或 raise 处离开
+
+
 @dataclass(frozen=True)
 class EmbeddingSettings:
     base_url: str
@@ -91,11 +117,17 @@ def build_embedder(settings: EmbeddingSettings, client=None):
             return vec
 
         async def create(self, input_data) -> list[float]:
-            res = await self._client.embeddings.create(**self._kwargs(input_data))
-            return self._check(res.data[0].embedding)
+            async def _call():
+                res = await self._client.embeddings.create(**self._kwargs(input_data))
+                return self._check(res.data[0].embedding)
+
+            return await _with_retry(_call)
 
         async def create_batch(self, input_data_list) -> list[list[float]]:
-            res = await self._client.embeddings.create(**self._kwargs(input_data_list))
-            return [self._check(item.embedding) for item in res.data]
+            async def _call():
+                res = await self._client.embeddings.create(**self._kwargs(input_data_list))
+                return [self._check(item.embedding) for item in res.data]
+
+            return await _with_retry(_call)
 
     return _ServerMRLEmbedder()
