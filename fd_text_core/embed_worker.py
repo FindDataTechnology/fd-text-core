@@ -9,6 +9,8 @@ claim-ledger：一次认领一批 pending 任务并置 claimed，成功后置 fi
 """
 from __future__ import annotations
 
+import os
+
 import math
 from dataclasses import dataclass
 
@@ -188,6 +190,29 @@ def reclaim_stale(stale_after: str = "5 minutes") -> int:
 #: 重烧一次 API（`claim_batch` 只看 pending，故重试必须由这里显式做）。
 RETRYABLE_HINTS = ("429", "rate limit", "status=5", "timeout", "Connection")
 
+#: Inputs per embedding HTTP call. A document carries ~248 unembedded chunks on
+#: average (p90 487, max 567 — measured 2026-11-08), so the old "one call for the
+#: whole batch" sent ~2,500 inputs per request and the upstream answered 503 /
+#: timed out: the affected documents could then never finish, and the head of the
+#: FIFO queue stayed there retrying forever. Slicing keeps every request small;
+#: the vectors are concatenated back in order, so callers see no difference.
+EMBED_INPUTS_PER_CALL = int(os.environ.get("FDTEXT_EMBEDDING_MAX_INPUTS", "96"))
+
+
+def _embed_all(embedder, texts: list[str]) -> list[list[float]]:
+    """Embed every text, in slices of EMBED_INPUTS_PER_CALL, order preserved."""
+    out: list[list[float]] = []
+    for start in range(0, len(texts), EMBED_INPUTS_PER_CALL):
+        chunk = texts[start:start + EMBED_INPUTS_PER_CALL]
+        vectors = embedder.embed(chunk).vectors
+        if len(vectors) != len(chunk):
+            raise RuntimeError(
+                f"嵌入返回 {len(vectors)} 条，期望 {len(chunk)} 条"
+                f"（slice {start}..{start + len(chunk)}）"
+            )
+        out.extend(vectors)
+    return out
+
 
 def is_retryable(error: str | None) -> bool:
     """True when the failure is transient (rate limit / timeout / connection).
@@ -291,9 +316,7 @@ def run_once(embedder: Embedder, model: str, limit: int = 50) -> WorkerResult:
     vectors: list[list[float]] | None = None
     if texts:
         try:
-            vectors = embedder.embed(texts).vectors
-            if len(vectors) != len(texts):
-                raise RuntimeError(f"嵌入返回 {len(vectors)} 条，期望 {len(texts)} 条")
+            vectors = _embed_all(embedder, texts)
         except Exception as exc:  # noqa: BLE001 —— 退回逐篇，见 docstring
             print(f"[embed] 批量嵌入失败，退回逐篇归因：{type(exc).__name__}: {str(exc)[:120]}")
             vectors = None
@@ -306,7 +329,7 @@ def run_once(embedder: Embedder, model: str, limit: int = 50) -> WorkerResult:
                 mine = vectors[pos:pos + len(targets)]
                 pos += len(targets)
             elif targets:
-                mine = embedder.embed([row["chunk_text"] for row in targets]).vectors
+                mine = _embed_all(embedder, [row["chunk_text"] for row in targets])
             else:
                 mine = []
             if targets:
