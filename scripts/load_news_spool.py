@@ -17,15 +17,43 @@ from __future__ import annotations
 
 import json
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from load_papers import build_embedder  # noqa: E402
+from fd_text_core import db as dbmod  # noqa: E402
 from fd_text_core import embed_worker  # noqa: E402
 from fd_text_core.ingest import Doc, load_documents  # noqa: E402
 from fd_text_core.provenance import Provenance  # noqa: E402
 
 DOMAIN = "news"
+
+# 同一批 loader 只允许一个实例：两个实例各自「先查后插」，谁都看不见对方未提交的
+# 行，于是双双插入 → 撞 uq_document_current_only（2026-11-08 手工 Job 与定时 Job
+# 撞车时实测）。CronJob 的 concurrencyPolicy=Forbid 只管它自己创建的 Job，管不住
+# 人手 `kubectl create job`，故在脚本里加会话级 advisory lock 兜底。
+_LOCK_KEY = 0x66645F6E65777301  # "fd_news" + 1
+
+
+@contextmanager
+def run_lock():
+    """拿到锁 yield True；锁被别的 loader 持有则 yield False（本轮跳过，下轮再来）。"""
+    pool = dbmod.get_pool()
+    with pool.connection() as conn:
+        # autocommit：会话级 advisory lock 绑连接，不必开一整个长事务（否则跑几小时
+        # 会把 xmin 拖住、挡住 vacuum）。
+        conn.autocommit = True
+        with conn.cursor() as cur:
+            cur.execute("SELECT pg_try_advisory_lock(%s) AS ok", (_LOCK_KEY,))
+            if not cur.fetchone()[0]:
+                yield False
+                return
+        try:
+            yield True
+        finally:
+            with conn.cursor() as cur:
+                cur.execute("SELECT pg_advisory_unlock(%s)", (_LOCK_KEY,))
 
 
 def iter_spool(spool: Path, limit: int = 5000) -> list[dict]:
@@ -128,20 +156,26 @@ def main() -> int:
         print(f"[warn] 跳过: {s}")
     print(f"[ingest] 待入库 {len(docs)} 条")
 
-    stats = load_documents(docs, batch_key="load_news_spool")
-    print(f"[ingest] {stats}")
+    with run_lock() as acquired:
+        if not acquired:
+            # 不是失败：另一个 loader 正在写同一批（手工 Job 与定时 Job 撞车时常见）。
+            # 立刻退出 0，让下一轮再试；重试无意义且会放大竞争。
+            print("[skip] 另一个 loader 正在运行（advisory lock 未获得），本轮跳过")
+            return 0
+        stats = load_documents(docs, batch_key="load_news_spool")
+        print(f"[ingest] {stats}")
 
-    embedder, model = build_embedder(args)
-    if args.fake_embed:
-        embed_worker.run_self_check = lambda *a, **k: 1.0  # type: ignore[assignment]
-    done = failed = 0
-    while True:
-        res = embed_worker.run_once(embedder, model, limit=args.embed_batch)
-        if res.claimed == 0:
-            break
-        done += res.embedded
-        failed += res.failed
-        print(f"[embed] claimed={res.claimed} embedded={res.embedded} chunks={res.chunks} failed={res.failed}")
+        embedder, model = build_embedder(args)
+        if args.fake_embed:
+            embed_worker.run_self_check = lambda *a, **k: 1.0  # type: ignore[assignment]
+        done = failed = 0
+        while True:
+            res = embed_worker.run_once(embedder, model, limit=args.embed_batch)
+            if res.claimed == 0:
+                break
+            done += res.embedded
+            failed += res.failed
+            print(f"[embed] claimed={res.claimed} embedded={res.embedded} chunks={res.chunks} failed={res.failed}")
 
     print(f"[done] news 域本轮：文档 {len(docs)}、嵌入块 {done}、失败 {failed}")
     return 0 if failed == 0 else 1

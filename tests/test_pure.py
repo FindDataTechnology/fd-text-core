@@ -196,6 +196,33 @@ def test_doc_leaves_clean_text_untouched_and_silent(caplog):
     assert not [r for r in caplog.records if "NUL" in r.getMessage()]
 
 
+def test_dedup_query_pins_current_status():
+    """回归：去重查询必须只看 `status='current'` 的那一行。
+
+    实录（2026-11-08，fd-info-ship-spool 追赶期）：
+      `psycopg.errors.UniqueViolation: … uq_document_current_only`
+      `DETAIL: Key (domain, source, source_id)=(news, cninfo, 1225615052) already exists.`
+    生产库上对同一 key 直查取证（只读）：
+      · 不带 status 的查询 → id 27884 **superseded**（h=7f8a52cf0537）
+      · 带 status='current' → id 28423 current（h=5642894e63ec）
+    即引擎拿**已退役行的哈希**比对 → 判为"新版" → 把「退役」打在死行上（no-op）
+    → 盲插新 current → 撞部分唯一索引。取到哪一行取决于堆上物理行序，属运气。
+
+    为什么不用 DB 用例锁这条：行序由 PG 物理布局决定，本机造不出生产那个布局
+    （试过"先插 superseded 再插 current"的最坏序，新旧实现都绿——那样的用例是自证）。
+    所以这里守的是**查询形状**：`load_documents` 里那条去重 SELECT 必须带 status 谓词。
+    """
+    import inspect
+
+    from fd_text_core import ingest
+
+    src = inspect.getsource(ingest.load_documents)
+    assert "existing = fetch_one(" in src
+    head = src.split("existing = fetch_one(", 1)[1].split("),", 1)[0]
+    assert "status=%s" in head, "去重查询必须钉 status，否则会拿到已退役行"
+    assert "CURRENT" in head, "status 谓词应绑定 CURRENT 常量而非字面量"
+
+
 class TestEmbedderDimensions:
     """MRL 截断维度是显式契约（text-embedding-upgrade-8b）：8B 原生 4096 维
     超出 pgvector HNSW 的 2000 维上限，必须请求 dimensions=1024。"""

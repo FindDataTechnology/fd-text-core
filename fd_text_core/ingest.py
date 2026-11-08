@@ -106,8 +106,14 @@ def load_documents(docs: Iterable[Doc], batch_key: str | None = None) -> dict:
 
     for d in docs:
         existing = fetch_one(
-            "SELECT id, content_hash FROM corpus_documents WHERE domain=%s AND source=%s AND source_id=%s",
-            (d.domain, d.source, d.source_id),
+            # MUST pin status：同一 (domain,source,source_id) 会因版本更替存在多行，
+            # 不限定就靠堆上的物理行序取"第一行"，取到已退役行会把「退役」打在死行上
+            # （no-op），随后盲插新 current → 撞 uq_document_current_only。
+            # 此前 test_news_versioning 能过纯属顺序碰巧（UPDATE 会把新元组挪到堆尾）。
+            # 实录 2026-11-08：fd-info-ship-spool 追赶时对 cninfo/1225615052 撞唯一键。
+            "SELECT id, content_hash FROM corpus_documents"
+            " WHERE domain=%s AND source=%s AND source_id=%s AND status=%s",
+            (d.domain, d.source, d.source_id, CURRENT),
         )
         if existing and existing["content_hash"] == d.content_hash:
             stats["skipped"] += 1
