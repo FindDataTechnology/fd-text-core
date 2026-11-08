@@ -44,11 +44,25 @@ def vector_literal(v: list[float]) -> str:
     return "[" + ",".join(f"{x:.7g}" for x in v) + "]"
 
 
+class SelfCheckUnavailable(RuntimeError):
+    """The anchor probe could not be answered (upstream 5xx / timeout).
+
+    Distinct from a similarity failure on purpose: "cannot check" is a transient
+    upstream condition — nothing is written, so skipping the round is safe — while
+    "cosine below floor" means the model or channel drifted and MUST stop the
+    worker. Production 2026-11-08: a single 503 on this one probe aborted whole
+    rounds, which is why some rounds embedded ~10 chunks and then exited red.
+    """
+
+
 def run_self_check(embedder: Embedder, model: str, *, bootstrap_text: str | None = None) -> float:
     """锚点余弦自检。首次（无锚点）写入锚点并返回 1.0。"""
     anchor = fetch_one("SELECT embedding FROM anchor_embedding WHERE tag=%s", (ANCHOR_TAG,))
     text = bootstrap_text or "fd-text-core 嵌入自检锚点 · embedding self-check anchor"
-    vec = embedder.embed([text]).vectors[0]
+    try:
+        vec = embedder.embed([text]).vectors[0]
+    except Exception as exc:  # noqa: BLE001 —— 探针答不上 ≠ 模型漂移
+        raise SelfCheckUnavailable(str(exc)[:200]) from exc
     if anchor is None:
         execute(
             "INSERT INTO anchor_embedding (tag, model, dim, embedding) VALUES (%s,%s,%s,%s::vector)",

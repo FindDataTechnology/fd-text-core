@@ -193,7 +193,15 @@ def main() -> int:
     done = failed = retryable = 0
     deadline = time.monotonic() + args.embed_seconds
     while True:
-        res = embed_worker.run_once(embedder, model, limit=args.embed_batch)
+        try:
+            res = embed_worker.run_once(embedder, model, limit=args.embed_batch)
+        except embed_worker.SelfCheckUnavailable as exc:
+            # 自检探针答不上（上游 5xx/超时）≠ 模型漂移：这一轮没写任何东西，
+            # 直接收工是安全的；真正的「绿着但向量缺失」由下面的积压超龄门盯住。
+            # 实录 2026-11-08：单次 503 打在这一个探针上就让整轮报废，
+            # 于是出现「一轮只嵌十块然后整轮判红」。
+            print(f"[skip] 自检探针上游不可用，本轮不做：{exc}")
+            break
         if res.claimed == 0:
             break
         done += res.embedded

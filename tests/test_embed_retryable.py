@@ -93,3 +93,19 @@ def test_a_failed_slice_raises_so_the_caller_can_fall_back(monkeypatch):
         assert "503" in str(exc)
     else:
         raise AssertionError("a failed slice must raise")
+
+
+def test_self_check_unavailable_is_not_model_drift():
+    """An unanswerable probe must be its own error, not a similarity failure.
+
+    Production 2026-11-08: one 503 on the anchor probe aborted whole rounds, so
+    rounds embedded ~10 chunks and exited red. "Cannot check" writes nothing and is
+    safe to skip; "cosine below floor" must still stop the worker.
+    """
+    from fd_text_core import embed_worker as w
+
+    assert issubclass(w.SelfCheckUnavailable, RuntimeError)
+    src = (__import__("pathlib").Path(__file__).resolve().parents[1]
+           / "scripts" / "load_news_spool.py").read_text()
+    assert "except embed_worker.SelfCheckUnavailable" in src
+    assert "本轮不做" in src
