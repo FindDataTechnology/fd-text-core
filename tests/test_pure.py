@@ -145,6 +145,57 @@ def test_empty_both_paths_is_rejected_by_doc_validation():
     assert "正文无归处" in src, "摄取入口应校验正文归处并明确报错"
 
 
+def test_doc_strips_nul_bytes_from_content_title_and_metadata():
+    """回归：正文里的 NUL 必须于入口清除。
+
+    实录（2026-11-08）：fd-info-ship-spool 连续 13 天每 5 分钟失败，原因是一条
+    `psycopg.DataError: PostgreSQL text fields cannot contain NUL (0x00) bytes`——
+    5000 条待入库被 13 条脏数据整体拖死。脏数据落盘形如 JSON 转义 `\\u0000`
+    （6 个 ASCII 字符，原始字节里根本没有 0x00），`json.loads` 之后才是真 NUL。
+    因此这里同时断言「原始字节无损、解码后有 NUL」这一前提，避免测试自身造错场景。
+    """
+    import hashlib
+    import json
+
+    from fd_text_core.ingest import Doc
+
+    dirty_content = "正文左\u0000右"
+    # 前提：JSON 里是转义串，字节里没有 0x00（正是它躲过字节级扫描的原因）
+    payload = json.dumps({"content": dirty_content}, ensure_ascii=False)
+    assert b"\x00" not in payload.encode("utf-8")
+    assert json.loads(payload)["content"] == dirty_content, "解码后才出现 NUL"
+
+    d = Doc(
+        domain="news",
+        source="_t_nul",
+        source_id="nul1",
+        title="标\u0000题",
+        content=dirty_content,
+        metadata={"entities": ["A\u0000B"], "raw_title": "t\u0000t", "\u0000k": "v"},
+    )
+
+    assert "\x00" not in d.content and d.content == "正文左右"
+    assert "\x00" not in (d.title or "") and d.title == "标题"
+    assert "\x00" not in json.dumps(d.metadata), "metadata 里也不许残留（jsonb 同样拒收）"
+    assert d.metadata["entities"] == ["AB"]
+    assert "k" in d.metadata, "dict 的键也要清洗"
+    # 清洗在 content_hash 之前：脏数据反复摄取应得到同一哈希（否则每轮都判为新版）
+    assert d.content_hash == hashlib.sha256("正文左右".encode("utf-8")).hexdigest()
+
+
+def test_doc_leaves_clean_text_untouched_and_silent(caplog):
+    """干净文档不得被改动，也不得刷警告（否则日志里全是噪音）。"""
+    import logging
+
+    from fd_text_core.ingest import Doc
+
+    with caplog.at_level(logging.WARNING, logger="fd_text_core.ingest"):
+        d = Doc(domain="news", source="_t_clean", source_id="c1",
+                title="题", content="正文", metadata={"lang": "zh"})
+    assert (d.title, d.content, d.metadata) == ("题", "正文", {"lang": "zh"})
+    assert not [r for r in caplog.records if "NUL" in r.getMessage()]
+
+
 class TestEmbedderDimensions:
     """MRL 截断维度是显式契约（text-embedding-upgrade-8b）：8B 原生 4096 维
     超出 pgvector HNSW 的 2000 维上限，必须请求 dimensions=1024。"""

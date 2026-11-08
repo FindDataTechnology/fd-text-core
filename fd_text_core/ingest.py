@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Iterable, Iterator
@@ -14,12 +15,37 @@ from typing import Any, Iterable, Iterator
 from .db import execute, fetch_all, fetch_one
 from .provenance import Provenance
 
+logger = logging.getLogger(__name__)
+
 CURRENT = "current"
 SUPERSEDED = "superseded"  # 中性退役词：绝不用垂域私有词汇（如法律线的「历史版本」）
 
 VALID_ORIGINS = ("crawl", "upload")  # upload 为将来自动取通道预留，本期无对外端点
 
 COLD_STORE_MIN_CHARS = 200_000  # 超过此长度的正文自动落 zstd 冷存，PG 只留指针
+
+_NUL = "\x00"
+
+
+def _has_nul(value: Any) -> bool:
+    if isinstance(value, str):
+        return _NUL in value
+    if isinstance(value, dict):
+        return any(_has_nul(k) or _has_nul(v) for k, v in value.items())
+    if isinstance(value, (list, tuple)):
+        return any(_has_nul(v) for v in value)
+    return False
+
+
+def _strip_nul(value: Any) -> Any:
+    """递归去掉 NUL（含 dict 的键）。"""
+    if isinstance(value, str):
+        return value.replace(_NUL, "")
+    if isinstance(value, dict):
+        return {_strip_nul(k): _strip_nul(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return type(value)(_strip_nul(v) for v in value)
+    return value
 
 
 @dataclass
@@ -40,6 +66,29 @@ class Doc:
             raise ValueError(f"origin 非法: {self.origin}，可用={VALID_ORIGINS}")
         if not (self.domain and self.source and self.source_id):
             raise ValueError("domain/source/source_id 均不可为空")
+        # PostgreSQL 的 text 列与 jsonb 都拒收 NUL：psycopg 抛
+        #   DataError: PostgreSQL text fields cannot contain NUL (0x00) bytes
+        # jsonb 抛 unsupported Unicode escape sequence。NUL 只可能来自上游脏数据，
+        # 而且**看原始字节查不出来**：它以 JSON 转义 `\u0000`（6 个 ASCII 字符）落盘，
+        # `json.loads` 之后才变成真 NUL（实测 fd-info spool：12438 行里 13 行 content 如此）。
+        # 因为一条脏数据会让**整批**入库失败（2026-11-08 起 fd-info-ship-spool 连续 13 天
+        # 每 5 分钟失败一次，5000 条全被 13 条毒数据拖死），所以在 Doc 这个统一入口清洗，
+        # 而不是让每个 loader 各修一遍。清洗在 content_hash 之前，保证反复摄取哈希稳定。
+        cleaned: list[str] = []
+        if self.content and _NUL in self.content:
+            self.content = self.content.replace(_NUL, "")
+            cleaned.append("content")
+        if self.title and _NUL in self.title:
+            self.title = self.title.replace(_NUL, "")
+            cleaned.append("title")
+        if _has_nul(self.metadata):
+            self.metadata = _strip_nul(self.metadata)
+            cleaned.append("metadata")
+        if cleaned:
+            logger.warning(
+                "NUL 已于入口清除：%s/%s/%s 的 %s（上游脏数据；PostgreSQL 不接受 NUL 字节）",
+                self.domain, self.source, self.source_id, ",".join(cleaned),
+            )
 
     @property
     def content_hash(self) -> str:

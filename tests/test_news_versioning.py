@@ -90,3 +90,55 @@ def test_three_content_changes_supersede_in_order(textcore_env):
             "DELETE FROM corpus_documents WHERE domain=%s AND source=%s",
             (domain, source),
         )
+
+
+def test_nul_in_body_ingests_after_entry_cleanup(textcore_env):
+    """回归：带 NUL 的正文必须能入库（实录 fd-info-ship-spool 连续 13 天失败）。
+
+    两段断言缺一不可：
+      ① **先证明这条路本来会炸**——绕过引擎直接插含 NUL 的文本，真 psycopg/PG 抛
+         `DataError: … cannot contain NUL (0x00) bytes`。否则这个用例只是"跑了没报错"，
+         换个早就清洗过的实现也一样绿（自证陷阱，见 fake-objects-must-mirror-installed-source）。
+      ② 再走 `load_documents` 真路径，断言入库成功且**库里存的是清洗后的正文**。
+    """
+    psycopg = pytest.importorskip("psycopg")
+    if not _url():
+        pytest.skip("缺 FDTEXT_DATABASE_URL（须指向可丢弃的测试库）")
+
+    from fd_text_core import ingest
+
+    dirty = "正文左\x00右"
+    cleaned = "正文左右"
+
+    # ① 证明这条路本来会炸（与 CronJob 日志里的报错同型）
+    with psycopg.connect(_url().replace("postgresql://", "postgres://")) as c, c.cursor() as cur:
+        with pytest.raises(psycopg.DataError):
+            cur.execute("SELECT %s::text AS t", (dirty,))
+        c.rollback()
+
+    # ② 走引擎入口：能入库，且落库的是清洗后的正文
+    domain, source, sid = "news", "_t_nul_spool", "nul1"
+    try:
+        stats = ingest.load_documents([
+            ingest.Doc(domain=domain, source=source, source_id=sid,
+                       title="标\x00题", content=dirty),
+        ])
+        assert stats["inserted"] == 1, stats
+        row = ingest.fetch_one(
+            "SELECT title, content FROM corpus_documents"
+            " WHERE domain=%s AND source=%s AND source_id=%s AND status='current'",
+            (domain, source, sid),
+        )
+        assert row["content"] == cleaned, "库里不得残留 NUL"
+        assert row["title"] == "标题"
+        # 同内容重放必须幂等（哈希在清洗之后算，否则每轮都判新版并无限堆版本）
+        again = ingest.load_documents([
+            ingest.Doc(domain=domain, source=source, source_id=sid,
+                       title="标\x00题", content=dirty),
+        ])
+        assert again == {"inserted": 0, "skipped": 1, "superseded": 0, "queued": 0}, again
+    finally:
+        ingest.execute(
+            "DELETE FROM corpus_documents WHERE domain=%s AND source=%s",
+            (domain, source),
+        )
