@@ -141,7 +141,8 @@ def test_empty_both_paths_is_rejected_by_doc_validation():
 
     from fd_text_core import ingest
 
-    src = inspect.getsource(ingest.load_documents)
+    # 归处判定在 2026-11-08 的批量化里搬进了 _placement（逐条与批量共用同一份判定）
+    src = inspect.getsource(ingest._placement)
     assert "正文无归处" in src, "摄取入口应校验正文归处并明确报错"
 
 
@@ -210,17 +211,19 @@ def test_dedup_query_pins_current_status():
 
     为什么不用 DB 用例锁这条：行序由 PG 物理布局决定，本机造不出生产那个布局
     （试过"先插 superseded 再插 current"的最坏序，新旧实现都绿——那样的用例是自证）。
-    所以这里守的是**查询形状**：`load_documents` 里那条去重 SELECT 必须带 status 谓词。
+    所以这里守的是**查询形状**：去重查询必须带 status 谓词。
+
+    2026-11-08 批量化后去重有两条路径（`_load_one` 逐条、`_load_batch` 成批），
+    两条都必须钉，漏一条就等于留了同一个洞。
     """
     import inspect
 
     from fd_text_core import ingest
 
-    src = inspect.getsource(ingest.load_documents)
-    assert "existing = fetch_one(" in src
-    head = src.split("existing = fetch_one(", 1)[1].split("),", 1)[0]
-    assert "status=%s" in head, "去重查询必须钉 status，否则会拿到已退役行"
-    assert "CURRENT" in head, "status 谓词应绑定 CURRENT 常量而非字面量"
+    for fn in (ingest._load_one, ingest._load_batch):
+        src = inspect.getsource(fn)
+        assert "status=%s" in src, f"{fn.__name__} 的去重查询必须钉 status"
+        assert "CURRENT" in src, f"{fn.__name__} 的 status 谓词应绑定 CURRENT 常量"
 
 
 class TestEmbedderDimensions:
