@@ -149,6 +149,12 @@ def main() -> int:
         default=int(os.environ.get("SPOOL_EMBED_SECONDS", "120")),
         help="本轮嵌入时间预算（秒）；到点收工，余下交给下一轮",
     )
+    ap.add_argument(
+        "--max-backlog-hours",
+        type=float,
+        default=float(os.environ.get("SPOOL_MAX_BACKLOG_HOURS", "6")),
+        help="嵌入积压最老条目超过此小时数即判本轮不健康（非零退出）",
+    )
     ap.add_argument("--fake-embed", action="store_true")
     args = ap.parse_args()
 
@@ -198,7 +204,27 @@ def main() -> int:
             break
 
     print(f"[done] news 域本轮：文档 {len(docs)}、嵌入块 {done}、失败 {failed}")
-    return 0 if failed == 0 else 1
+    if failed:
+        return 1
+
+    # 队列健康也要算进"这一轮成功"：嵌入积压再深，作业每轮照样能干净收尾，
+    # 于是 lastSuccessfulTime 一路前移、看板常绿——而检索面正在静默查不到这些文档
+    # （实录 2026-11-08：4575 条待嵌、最老的 12.4 天，看板显示一切正常）。
+    # 积压超龄即非零退出，让看板那条 job 变红；阈值默认 6h（稳态积压是分钟级）。
+    backlog = dbmod.fetch_one(
+        "SELECT count(*) AS n,"
+        " EXTRACT(EPOCH FROM (now() - min(created_at))) / 3600.0 AS hours"
+        " FROM embed_tasks WHERE state='pending'"
+    )
+    hours = float(backlog["hours"]) if backlog and backlog["hours"] is not None else 0.0
+    if hours > args.max_backlog_hours:
+        print(
+            f"[warn] 嵌入积压 {backlog['n']} 条，最老 {hours:.1f}h > 阈值 "
+            f"{args.max_backlog_hours}h：向量缺失会让检索静默漏结果，本轮判不健康"
+        )
+        return 1
+    print(f"[queue] 嵌入积压 {backlog['n']} 条，最老 {hours:.1f}h（阈值 {args.max_backlog_hours}h）")
+    return 0
 
 
 if __name__ == "__main__":
