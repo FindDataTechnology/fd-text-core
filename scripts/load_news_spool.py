@@ -16,7 +16,9 @@ JSONL 由 fd-info 持有，S3 冷存约定不因此改变（静态语料仍走 S
 from __future__ import annotations
 
 import json
+import os
 import sys
+import time
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -141,6 +143,12 @@ def main() -> int:
     ap.add_argument("--spool", default="/data/spool", help="fd-info spool 根目录")
     ap.add_argument("--limit", type=int, default=5000, help="最多入库多少条（折叠后）")
     ap.add_argument("--embed-batch", type=int, default=50)
+    ap.add_argument(
+        "--embed-seconds",
+        type=int,
+        default=int(os.environ.get("SPOOL_EMBED_SECONDS", "120")),
+        help="本轮嵌入时间预算（秒）；到点收工，余下交给下一轮",
+    )
     ap.add_argument("--fake-embed", action="store_true")
     args = ap.parse_args()
 
@@ -156,30 +164,38 @@ def main() -> int:
         print(f"[warn] 跳过: {s}")
     print(f"[ingest] 待入库 {len(docs)} 条")
 
+    # 锁只护**摄取**：竞态在"先查后插"，嵌入是带 claim 的队列（SKIP LOCKED 并发安全）。
+    # 2026-11-08 实测教训：锁原来覆盖整轮，而嵌入阶段可长达小时级，于是期间每一个
+    # 定时 Job 都抢不到锁——修完假绿灯后它们会整批变红，把真事故淹掉。
     with run_lock() as acquired:
         if not acquired:
             # 跳过**不能算成功**：CronJob 用 Job 成败更新 status.lastSuccessfulTime，
             # 而运维看板正是拿它判"上次真成功"。实测 2026-11-08：手工 Job 占锁时，
             # 定时 Job 什么都没干却 exit 0，被记成 Complete 1/1 → 看板假绿。
             # 故这里非零退出（75 = EX_TEMPFAIL，"临时不可用，稍后重试"语义）。
-            # 正常路径不会撞锁：concurrencyPolicy=Forbid 已保证 CronJob 自身不重叠，
-            # 只有人手 create job 才会争用——那种情况本就该红，不该装成绿的。
-            print("[skip] 另一个 loader 正在运行（advisory lock 未获得），本轮不计成功")
+            print("[skip] 另一个 loader 正在摄取（advisory lock 未获得），本轮不计成功")
             return 75
         stats = load_documents(docs, batch_key="load_news_spool")
         print(f"[ingest] {stats}")
 
-        embedder, model = build_embedder(args)
-        if args.fake_embed:
-            embed_worker.run_self_check = lambda *a, **k: 1.0  # type: ignore[assignment]
-        done = failed = 0
-        while True:
-            res = embed_worker.run_once(embedder, model, limit=args.embed_batch)
-            if res.claimed == 0:
-                break
-            done += res.embedded
-            failed += res.failed
-            print(f"[embed] claimed={res.claimed} embedded={res.embedded} chunks={res.chunks} failed={res.failed}")
+    # 嵌入按**时间预算**推进：排空为止会让单轮撑到 deadline 被杀，作业永远不算成功
+    # （lastSuccessfulTime 不前移 → 看板一直红）。做成泵：每轮嵌一段就收工，
+    # 下一轮（5 分钟后）接着排，积压按同样的总速率消失，但每轮都能干净收尾。
+    embedder, model = build_embedder(args)
+    if args.fake_embed:
+        embed_worker.run_self_check = lambda *a, **k: 1.0  # type: ignore[assignment]
+    done = failed = 0
+    deadline = time.monotonic() + args.embed_seconds
+    while True:
+        res = embed_worker.run_once(embedder, model, limit=args.embed_batch)
+        if res.claimed == 0:
+            break
+        done += res.embedded
+        failed += res.failed
+        print(f"[embed] claimed={res.claimed} embedded={res.embedded} chunks={res.chunks} failed={res.failed}")
+        if time.monotonic() >= deadline:
+            print(f"[embed] 达到本轮时间预算 {args.embed_seconds}s，余下批次交给下一轮")
+            break
 
     print(f"[done] news 域本轮：文档 {len(docs)}、嵌入块 {done}、失败 {failed}")
     return 0 if failed == 0 else 1
