@@ -68,7 +68,23 @@ def build_embedder(args) -> tuple[object, str]:
             "缺少 FDTEXT_EMBEDDING_API_BASE / FDTEXT_EMBEDDING_API_KEY。"
             "要验证管线而非向量质量，显式加 --fake-embed。"
         )
-    return Embedder(base, key, model, dimensions=dim, provider=provider_from_env()), model
+    # 超时/重试次数按需可调（默认沿用 Embedder 自带的 60s × 6 次）：
+    # 默认退避 1→30s，最坏一次调用能卡 ~7 分钟。实测 2026-11-08：spool loader
+    # 一轮撞两次限流就把 activeDeadlineSeconds 吃掉、整轮零进度。
+    timeout = int(os.environ.get("FDTEXT_EMBEDDING_TIMEOUT", "60"))
+    attempts = int(os.environ.get("FDTEXT_EMBEDDING_MAX_ATTEMPTS", "6"))
+    return (
+        Embedder(
+            base,
+            key,
+            model,
+            dimensions=dim,
+            provider=provider_from_env(),
+            timeout=timeout,
+            max_attempts=attempts,
+        ),
+        model,
+    )
 
 
 def main() -> int:
