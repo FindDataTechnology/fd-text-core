@@ -158,10 +158,14 @@ def main() -> int:
 
     with run_lock() as acquired:
         if not acquired:
-            # 不是失败：另一个 loader 正在写同一批（手工 Job 与定时 Job 撞车时常见）。
-            # 立刻退出 0，让下一轮再试；重试无意义且会放大竞争。
-            print("[skip] 另一个 loader 正在运行（advisory lock 未获得），本轮跳过")
-            return 0
+            # 跳过**不能算成功**：CronJob 用 Job 成败更新 status.lastSuccessfulTime，
+            # 而运维看板正是拿它判"上次真成功"。实测 2026-11-08：手工 Job 占锁时，
+            # 定时 Job 什么都没干却 exit 0，被记成 Complete 1/1 → 看板假绿。
+            # 故这里非零退出（75 = EX_TEMPFAIL，"临时不可用，稍后重试"语义）。
+            # 正常路径不会撞锁：concurrencyPolicy=Forbid 已保证 CronJob 自身不重叠，
+            # 只有人手 create job 才会争用——那种情况本就该红，不该装成绿的。
+            print("[skip] 另一个 loader 正在运行（advisory lock 未获得），本轮不计成功")
+            return 75
         stats = load_documents(docs, batch_key="load_news_spool")
         print(f"[ingest] {stats}")
 
