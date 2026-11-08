@@ -190,7 +190,7 @@ def main() -> int:
     embedder, model = build_embedder(args)
     if args.fake_embed:
         embed_worker.run_self_check = lambda *a, **k: 1.0  # type: ignore[assignment]
-    done = failed = 0
+    done = failed = retryable = 0
     deadline = time.monotonic() + args.embed_seconds
     while True:
         res = embed_worker.run_once(embedder, model, limit=args.embed_batch)
@@ -198,13 +198,20 @@ def main() -> int:
             break
         done += res.embedded
         failed += res.failed
+        retryable += res.retryable
         print(f"[embed] claimed={res.claimed} embedded={res.embedded} chunks={res.chunks} failed={res.failed}")
         if time.monotonic() >= deadline:
             print(f"[embed] 达到本轮时间预算 {args.embed_seconds}s，余下批次交给下一轮")
             break
 
-    print(f"[done] news 域本轮：文档 {len(docs)}、嵌入块 {done}、失败 {failed}")
-    if failed:
+    print(f"[done] news 域本轮：文档 {len(docs)}、嵌入块 {done}、失败 {failed}"
+          f"（其中可重试 {retryable}）")
+    # 只有**永久性**失败才判这一轮不成功。限流/超时/连接类失败已经被
+    # retry_rate_limited() 在冷却后放回 pending，下一轮照常接着嵌；把它们算成
+    # Job 失败只会让看板常红、Error pod 堆成山，而队列其实在正常排空。
+    # 真正的「绿着但向量缺失」由下面的积压超龄门负责（90932c4 就是为此加的），
+    # 所以这里不再重复报警——但会在 [done] 行里如实列出可重试的数量。
+    if failed - retryable:
         return 1
 
     # 队列健康也要算进"这一轮成功"：嵌入积压再深，作业每轮照样能干净收尾，

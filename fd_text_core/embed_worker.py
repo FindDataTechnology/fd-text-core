@@ -76,6 +76,7 @@ class WorkerResult:
     embedded: int = 0
     chunks: int = 0
     failed: int = 0
+    retryable: int = 0  # 失败中属瞬时的（限流/超时/连接）——已被 cooldown 后放回 pending
     reclaimed: int = 0  # 本次开工回收的陈旧 claim 数
 
 
@@ -188,6 +189,19 @@ def reclaim_stale(stale_after: str = "5 minutes") -> int:
 RETRYABLE_HINTS = ("429", "rate limit", "status=5", "timeout", "Connection")
 
 
+def is_retryable(error: str | None) -> bool:
+    """True when the failure is transient (rate limit / timeout / connection).
+
+    The same list drives the SQL below, so the classifier a caller uses and the
+    requeue rule cannot drift apart.
+    """
+    text = (error or "").lower()
+    return any(hint.lower() in text for hint in RETRYABLE_HINTS)
+
+
+_RETRYABLE_SQL = " OR ".join(["error LIKE %s"] * len(RETRYABLE_HINTS))
+
+
 def retry_rate_limited(stale_after: str = "10 minutes", limit: int = 500) -> int:
     """把因**可重试原因**失败的任务放回 pending（限时 + 限量，避免打转）。
 
@@ -202,12 +216,10 @@ def retry_rate_limited(stale_after: str = "10 minutes", limit: int = 500) -> int
         "WHERE id IN ("
         "  SELECT id FROM embed_tasks WHERE state='failed'"
         "   AND finished_at < now() - %s::interval"
-        "   AND (error LIKE '%%429%%' OR error ILIKE '%%rate limit%%'"
-        "        OR error LIKE '%%status=5%%' OR error ILIKE '%%timeout%%'"
-        "        OR error ILIKE '%%connection%%')"
+        f"   AND ({_RETRYABLE_SQL})"
         "   ORDER BY finished_at LIMIT %s"
         ")",
-        (stale_after, limit),
+        (stale_after, *[f"%{hint}%" for hint in RETRYABLE_HINTS], limit),
     )
 
 
@@ -248,6 +260,7 @@ def run_once(embedder: Embedder, model: str, limit: int = 50) -> WorkerResult:
     # ── 阶段一：逐篇准备（取文档 / 切块 / 收集待嵌块），失败就地归因 ──
     prepared: list[tuple[dict, dict, list[dict]]] = []
     failed = 0
+    retryable = 0
     for t in tasks:
         try:
             doc = fetch_one("SELECT * FROM corpus_documents WHERE id=%s", (t["document_id"],))
@@ -264,11 +277,14 @@ def run_once(embedder: Embedder, model: str, limit: int = 50) -> WorkerResult:
             )
             prepared.append((t, doc, targets))
         except Exception as exc:  # noqa: BLE001
+            message = str(exc)[:500]
             execute(
                 "UPDATE embed_tasks SET state='failed', finished_at=now(), error=%s WHERE id=%s",
-                (str(exc)[:500], t["id"]),
+                (message, t["id"]),
             )
             failed += 1
+            if is_retryable(message):
+                retryable += 1
 
     # ── 阶段二：整批一次嵌入（跨文档）──
     texts = [row["chunk_text"] for _, _, targets in prepared for row in targets]
@@ -306,12 +322,17 @@ def run_once(embedder: Embedder, model: str, limit: int = 50) -> WorkerResult:
             )
             res.embedded += 1
         except Exception as exc:  # noqa: BLE001
+            message = str(exc)[:500]
             execute(
                 "UPDATE embed_tasks SET state='failed', finished_at=now(), error=%s WHERE id=%s",
-                (str(exc)[:500], t["id"]),
+                (message, t["id"]),
             )
             failed += 1
-    return WorkerResult(res.claimed, res.embedded, res.chunks, failed)
+            if is_retryable(message):
+                retryable += 1
+    res.failed = failed
+    res.retryable = retryable
+    return res
 
 
 def _document_text(doc: dict) -> str:
