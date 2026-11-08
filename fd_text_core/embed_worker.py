@@ -14,7 +14,7 @@ from dataclasses import dataclass
 
 from . import coldstore
 from .chunking import chunk_text, verify_lossless
-from .db import execute, fetch_all, fetch_one
+from .db import cursor, execute, fetch_all, fetch_one
 from .embedding import Embedder
 from .tokenize import cjk_tokens_text
 from .verticals.registry import get_strategy
@@ -199,45 +199,88 @@ def claim_batch(limit: int = 50) -> list[dict]:
 
 
 def run_once(embedder: Embedder, model: str, limit: int = 50) -> WorkerResult:
-    """跑一批。开工前必过自检门。"""
+    """跑一批。开工前必过自检门。
+
+    嵌入调用**按整批合并**（2026-11-08 批量化）：库在 tailnet，一次 HTTP 往返换来的
+    向量数与 input 条数无关——实测 1 条 3.9s、8 条 2.2s，逐篇调用等于把这段延迟
+    按文档数乘一遍。合并后单批 10 篇的 40+ 块只发 1 次请求。
+
+    合并失败时退回逐篇，保住「哪一篇坏」的归因（否则一条脏文本会让整批记失败，
+    与"失败必须可定位"冲突）。
+    """
     run_self_check(embedder, model)
     res = WorkerResult()
     res.reclaimed = reclaim_stale()
     tasks = claim_batch(limit)
     res.claimed = len(tasks)
+
+    # ── 阶段一：逐篇准备（取文档 / 切块 / 收集待嵌块），失败就地归因 ──
+    prepared: list[tuple[dict, dict, list[dict]]] = []
+    failed = 0
     for t in tasks:
         try:
             doc = fetch_one("SELECT * FROM corpus_documents WHERE id=%s", (t["document_id"],))
             if doc is None:
                 execute("UPDATE embed_tasks SET state='missing_doc', finished_at=now() WHERE id=%s", (t["id"],))
-                res.failed += 1
+                failed += 1
                 continue
             text = _document_text(doc)
-            written = ensure_chunks(doc, text)
-            res.chunks += written
+            res.chunks += ensure_chunks(doc, text)
             # 只嵌尚未嵌入的块，断点续嵌天然幂等
             targets = fetch_all(
                 "SELECT id, chunk_text FROM corpus_chunks WHERE document_id=%s AND embedding IS NULL ORDER BY chunk_no",
                 (doc["id"],),
             )
+            prepared.append((t, doc, targets))
+        except Exception as exc:  # noqa: BLE001
+            execute(
+                "UPDATE embed_tasks SET state='failed', finished_at=now(), error=%s WHERE id=%s",
+                (str(exc)[:500], t["id"]),
+            )
+            failed += 1
+
+    # ── 阶段二：整批一次嵌入（跨文档）──
+    texts = [row["chunk_text"] for _, _, targets in prepared for row in targets]
+    vectors: list[list[float]] | None = None
+    if texts:
+        try:
+            vectors = embedder.embed(texts).vectors
+            if len(vectors) != len(texts):
+                raise RuntimeError(f"嵌入返回 {len(vectors)} 条，期望 {len(texts)} 条")
+        except Exception as exc:  # noqa: BLE001 —— 退回逐篇，见 docstring
+            print(f"[embed] 批量嵌入失败，退回逐篇归因：{type(exc).__name__}: {str(exc)[:120]}")
+            vectors = None
+
+    # ── 阶段三：写回并收尾 ──
+    pos = 0
+    for t, doc, targets in prepared:
+        try:
+            if vectors is not None:
+                mine = vectors[pos:pos + len(targets)]
+                pos += len(targets)
+            elif targets:
+                mine = embedder.embed([row["chunk_text"] for row in targets]).vectors
+            else:
+                mine = []
             if targets:
-                vectors = embedder.embed([r["chunk_text"] for r in targets]).vectors
-                for row, v in zip(targets, vectors):
-                    execute(
-                        "UPDATE corpus_chunks SET embedding=%s::vector, embedded_at=now() WHERE id=%s AND domain=%s",
-                        (vector_literal(v), row["id"], doc["domain"]),
+                with cursor(commit=True) as cur:
+                    cur.executemany(
+                        "UPDATE corpus_chunks SET embedding=%s::vector, embedded_at=now()"
+                        " WHERE id=%s AND domain=%s",
+                        [(vector_literal(v), row["id"], doc["domain"])
+                         for row, v in zip(targets, mine)],
                     )
             execute(
                 "UPDATE embed_tasks SET state='finished', finished_at=now() WHERE id=%s", (t["id"],)
             )
             res.embedded += 1
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             execute(
                 "UPDATE embed_tasks SET state='failed', finished_at=now(), error=%s WHERE id=%s",
                 (str(exc)[:500], t["id"]),
             )
-            res.failed += 1
-    return WorkerResult(res.claimed, res.embedded, res.chunks, res.failed)
+            failed += 1
+    return WorkerResult(res.claimed, res.embedded, res.chunks, failed)
 
 
 def _document_text(doc: dict) -> str:
