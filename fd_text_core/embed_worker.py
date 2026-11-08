@@ -183,6 +183,34 @@ def reclaim_stale(stale_after: str = "5 minutes") -> int:
     )
 
 
+#: 可重试的失败原因。命中其一才放回 pending——否则一条永远失败的脏文本会每轮
+#: 重烧一次 API（`claim_batch` 只看 pending，故重试必须由这里显式做）。
+RETRYABLE_HINTS = ("429", "rate limit", "status=5", "timeout", "Connection")
+
+
+def retry_rate_limited(stale_after: str = "10 minutes", limit: int = 500) -> int:
+    """把因**可重试原因**失败的任务放回 pending（限时 + 限量，避免打转）。
+
+    实录（2026-11-08）：一轮嵌入撞上游 `429 Upstream rate limit exceeded` 后，
+    2 篇文档落 `state='failed'` 就再也没人管——`claim_batch` 只挑 pending，
+    `reclaim_stale` 只回收 claimed。于是"限流一次 = 这几篇永久没向量"，
+    而检索面缺块不会报错，只会慢慢查不到。
+    故失败的里只挑可重试原因、且已过冷却期、且每次限量，噪声与打转都被挡住。
+    """
+    return execute(
+        "UPDATE embed_tasks SET state='pending', error=NULL, finished_at=NULL "
+        "WHERE id IN ("
+        "  SELECT id FROM embed_tasks WHERE state='failed'"
+        "   AND finished_at < now() - %s::interval"
+        "   AND (error LIKE '%%429%%' OR error ILIKE '%%rate limit%%'"
+        "        OR error LIKE '%%status=5%%' OR error ILIKE '%%timeout%%'"
+        "        OR error ILIKE '%%connection%%')"
+        "   ORDER BY finished_at LIMIT %s"
+        ")",
+        (stale_after, limit),
+    )
+
+
 def claim_batch(limit: int = 50) -> list[dict]:
     rows = fetch_all(
         """
@@ -211,6 +239,9 @@ def run_once(embedder: Embedder, model: str, limit: int = 50) -> WorkerResult:
     run_self_check(embedder, model)
     res = WorkerResult()
     res.reclaimed = reclaim_stale()
+    retried = retry_rate_limited()
+    if retried:
+        print(f"[embed] 可重试失败的任务回到队列：{retried} 条（限流/超时，非内容问题）")
     tasks = claim_batch(limit)
     res.claimed = len(tasks)
 
