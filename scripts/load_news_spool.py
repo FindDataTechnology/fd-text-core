@@ -100,6 +100,13 @@ def rows_to_docs(rows: list[dict]) -> tuple[list[Doc], list[str]]:
             skipped.append(f"缺正文: {source}:{source_id}")
             continue
 
+        # 有的源 spool 里存的是原始 HTML（cn-gov 实测 100%），在边界转成干净正文
+        raw_len = len(content)
+        content = _strip_html_to_text(source, content)
+        if not content:
+            skipped.append(f"正文无法从 HTML 还原: {source}:{source_id}（原 {raw_len} 字）")
+            continue
+
         md: dict = {}
         md["provenance"] = Provenance.now(source, source_id).to_dict()
         md["source_url"] = str(row.get("url") or "")
@@ -125,6 +132,41 @@ def rows_to_docs(rows: list[dict]) -> tuple[list[Doc], list[str]]:
             )
         )
     return docs, skipped
+
+
+def _strip_html_to_text(source: str, content: str) -> str:
+    """spool 里有的源存的是**原始 HTML**，在摄取边界转成干净正文。
+
+    实录（2026-11-08）：cn-gov 的 spool 46 条记录 **100% 含 HTML 标签**——上游
+    `fd-cn-gov.detail.fetch.fetch_detail` 返回的是 `html_content`，落盘的就是标签汤
+    （`<dt> 来 源： </dt><dd id="ly">…`、`<div class="social-icon-wrapper">`）。
+    结果：1275 个 gov 切片里 88% 是标记，政务检索只能捞出标记，向量化纯烧钱。
+
+    为什么在**这里**修而不是改 fd-info：解析器（`parse_gov_doc`，纯标准库、多候选
+    正文容器 + 过滤页脚/分享按钮 + 抽文号与成文日期）本来就住在 fd-text-core；
+    fd-info 镜像里没有本包，在那里调会 ImportError 从而把所有政务条目判失败。
+    放在摄取边界还顺带修好**已入库**的旧条目（内容变了 = 新版本 = 旧行退役）。
+
+    spool 仍保持原样（原始 HTML 是事实档案，解析器以后改进还能重放）。
+    HTML 转不出正文时返回空串，由调用方按"缺正文"跳过——宁可缺，不落脏数据。
+    """
+    if "<" not in content:
+        return content
+    try:
+        from fd_text_core.verticals.gov.parser import parse_gov_doc
+    except ImportError:
+        return content
+    try:
+        doc = parse_gov_doc(content)
+    except Exception:
+        return ""
+    body = (getattr(doc, "body", "") or "").strip()
+    if not body:
+        return ""
+    # 解析器也救不回来的（仍有大量标签）宁可不入库
+    if body.count("<") > 20:
+        return ""
+    return body
 
 
 def _facet_source_type(source: str) -> str:

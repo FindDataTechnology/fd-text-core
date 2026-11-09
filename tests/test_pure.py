@@ -482,3 +482,37 @@ def test_eval_all_partitions_labeled_domains_by_registry():
 
     # 空标注集不产生任何域
     assert partition_labeled_by_registry([], ["papers"]) == ([], [])
+
+
+def test_spool_rows_strip_html_at_ingest_boundary():
+    """回归：spool 里的原始 HTML 必须在摄取边界转成正文（2026-11-08 实录）。
+
+    cn-gov 的 spool 46 条 **100% 含 HTML**（上游 fetch_detail 返回 html_content），
+    入库后 1275 个 gov 切片里 88% 是标记，政务检索只能捞出标记、向量化纯烧钱。
+    本用例走真解析器（纯标准库，无外部依赖），断言标签被去掉、正文关键字保留。
+    """
+    import sys
+    from pathlib import Path as _Path
+
+    sys.path.insert(0, str(_Path(__file__).resolve().parents[1] / "scripts"))
+    from load_news_spool import _strip_html_to_text  # noqa: E402
+
+    html = (
+        "<html><body>"
+        '<div class="social-icon-wrapper"><a href="#"><img src="weibo.png"></a></div>'
+        '<div id="content1"><p>各省、自治区、直辖市生态环境厅（局）：</p>'
+        "<p>为加强监督管理，现就有关事项通知如下。</p>"
+        "<p>一、检查范围。本次检查覆盖重点排污单位。</p></div>"
+        "</body></html>"
+    )
+    body = _strip_html_to_text("cn-gov", html)
+    assert body, "解析器可用时必须拿到正文"
+    assert "重点排污单位" in body, "正文关键字必须保留"
+    assert "social-icon" not in body and "weibo" not in body, "页脚/分享按钮必须被过滤"
+    assert body.count("<") == 0, f"不应残留标签：{body[:80]}"
+
+    # 干净正文原样返回（不去折腾非 HTML 内容）
+    assert _strip_html_to_text("cninfo", "纯文本正文，无标签。") == "纯文本正文，无标签。"
+
+    # 解析不出正文时返回空串 → 调用方按"缺正文"跳过，不落脏数据
+    assert _strip_html_to_text("cn-gov", "<div></div>") == ""
