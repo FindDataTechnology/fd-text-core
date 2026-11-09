@@ -44,4 +44,9 @@ jobs:
           FDTEXT_S3_ACCESS_KEY: ${{ secrets.FDTEXT_S3_ACCESS_KEY }}
           FDTEXT_S3_SECRET_KEY: ${{ secrets.FDTEXT_S3_SECRET_KEY }}
           FDTEXT_S3_BUCKET: fd-text
-        run: python scripts/conformance_gate.py --changed-base origin/main
+        # --strict-ci（审计 06 §9）：违规与 FAIL 必红，环境缺失导致的跳过不算；
+        # 原来连 --strict 都不敢加（一加就必红），于是唯一那道检索验收线从不执行。
+        # --eval-all 让它真的跑起来；标注集/凭据缺失时它会登记 SKIPPED，
+        # 而这条 SKIPPED 的 detail 不以「缺 」开头，所以 strict-ci 会判红——
+        # 这是刻意的：宁可 CI 提醒补标注集，也不要一条静默不跑的门。
+        run: python scripts/conformance_gate.py --changed-base origin/main --strict-ci --eval-all

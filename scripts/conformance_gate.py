@@ -526,7 +526,15 @@ def check_retrieval_eval(domain: str | None, k: int = 10, variant: str = "defaul
     ——沿既有三值口径，不新造语义（见 change text-retrieval-eval 的 design D4）。
     """
     if not domain:
-        return  # 未开启：不出现在结果里（保持既有七项的行为完全不变）
+        # **不要静默 return**（审计 06 §9）。原来这里直接 `return`，于是这项检查
+        # 在结果里**根本不存在**——而 CI 既没传 `--eval-domain/--eval-all`、也没传
+        # `--strict`，结果是「一个把召回率砍半的改动能过门」：那项检查从来没登记。
+        #
+        # 现在登记一条 SKIPPED：它会被打印、会被 `--strict` 判失败。
+        # CI 侧同时补 `--strict`（见 .github/workflows/ci.yml），让缺项成为失败而非警告。
+        rec("检索评测", "SKIPPED",
+            "未请求（需 --eval-domain <域> 或 --eval-all；标注集与嵌入凭据就绪后在网内跑）")
+        return
     # 检查项名带垂域：--eval-all 会每域调用一次，同名会让结果登记与打印互相覆盖
     # （实测：三次调用都打印第一域的行、摘要里同名三次）。
     section = f"检索评测[{domain}]" if variant == "default" else f"检索评测[{domain}:{variant}]"
@@ -720,6 +728,11 @@ def cli() -> int:
                     help="评测标注集变体：default=守门集（判验收线）/ hard=分级难题集（度量面）")
     ap.add_argument("--strict", action="store_true",
                     help="严格模式：任一 SKIPPED 或 FAIL 均导致非零退出码（垂域验收唯一合法口径）")
+    ap.add_argument("--strict-ci", action="store_true",
+                    help="CI 档严格模式（审计 06 §9）：违规与 FAIL 必红，但**因环境缺失**"
+                         "而跳过的项不算失败。CI runner 进不了 tailnet，DB/嵌入类检查必然 SKIPPED；"
+                         "原来 CI 连 --strict 都不敢加，于是唯一那道检索验收线从不执行。"
+                         "本档让「能查的都查了且都过」成为 CI 的硬要求，同时不把环境缺失当代码缺陷。")
     args = ap.parse_args()
 
     print("fd-text-core conformance gate (read-only)" + (" [strict]" if args.strict else ""))
@@ -799,6 +812,27 @@ def cli() -> int:
         print(f"\n❌ strict 模式失败：{len(bad_items)} 项未通过（失败 {len(failed)} / 跳过 {len(skipped)}）")
         print("   垂域验收只认 strict 全绿；请按上方未覆盖清单补齐连接后在网内重跑。")
         return 1
+    if args.strict_ci:
+        # CI 档（审计 06 §9）：**能跑的都跑了且都过**才算过。
+        # 区分两种 SKIPPED：
+        #   * 环境缺失（DB/嵌入凭据不可达）—— CI runner 进不了 tailnet，这不是代码缺陷；
+        #   * 其它（未请求、逻辑分支跳过）—— 那是真空洞，CI 里必须红。
+        # 这条的由来：原来 CI 连 --strict 都不敢加（一加就必红），于是唯一那道
+        # 检索验收线从不执行，"把召回率砍半"能过门。
+        env_skips = {n for n, st, d in Results
+                     if st == "SKIPPED" and d.startswith("缺 ")}
+        holes = [n for n, st, _ in Results if st == "SKIPPED" and n not in env_skips]
+        if failed or holes:
+            print(f"\n❌ strict-ci 失败：失败 {len(failed)} 项 / 未请求 {len(holes)} 项"
+                  + (f"（{', '.join(holes)}）" if holes else ""))
+            print("   环境缺失（缺 <变量>）导致的跳过不算失败；其它跳过必须补齐。")
+            return 1
+        if env_skips:
+            print(f"\n⚠️  strict-ci 通过，但有 {len(env_skips)} 项因环境缺失跳过"
+                  f"（{', '.join(sorted(env_skips))}）——网内 --strict 才判垂域验收。")
+        else:
+            print("\n✅ strict-ci 全绿（无环境跳过）")
+        return 0
     if Violations:
         return 1
     if skipped:
