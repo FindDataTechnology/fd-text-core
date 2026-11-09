@@ -171,7 +171,7 @@ def consumer_tools(consumers: list[Path]) -> dict[str, set[str]]:
         for f in list(c.rglob("*.json")) + list(c.rglob("*.md")):
             try:
                 text = f.read_text(encoding="utf-8", errors="ignore")
-            except Exception:
+            except Exception:  # noqa: S112, BLE001 —— 读文件失败就跳过这一份
                 continue
             for line in text.splitlines():
                 if re.match(r"\s*(data_binding|mcp_servers)\s*:", line):
@@ -181,7 +181,7 @@ def consumer_tools(consumers: list[Path]) -> dict[str, set[str]]:
     return out
 
 
-def fail(problems: list[str]) -> "None":
+def fail(problems: list[str]) -> None:
     print(f"✗ {len(problems)} 项不通过：", file=sys.stderr)
     for p in problems:
         print(f"  - {p}", file=sys.stderr)

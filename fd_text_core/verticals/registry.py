@@ -5,8 +5,8 @@
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable
 
 from ..chunking import SlidingWindow
 
@@ -170,7 +170,7 @@ def load_verticals() -> list[str]:
         except ModuleNotFoundError:
             # 兜底域（bootstrap 注册但无目录）：合法，保持兜底配置
             pass
-        except Exception as exc:  # 垂域模块自身出错：如实报出，不静默
+        except Exception as exc:  # 垂域模块自身出错：如实报出，不静默  # noqa: BLE001
             print(f"[registry] 垂域 {name} 加载失败: {type(exc).__name__}: {exc}", file=sys.stderr)
     return loaded
 

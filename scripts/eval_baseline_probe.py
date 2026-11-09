@@ -23,8 +23,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from fd_text_core.kg_lane import eval as eval_mod  # noqa: E402
-from fd_text_core.kg_lane.eval import McpBaselineClient  # noqa: E402
+from fd_text_core.kg_lane import eval as eval_mod
+from fd_text_core.kg_lane.eval import McpBaselineClient
 
 
 async def main() -> int:
@@ -51,7 +51,7 @@ async def main() -> int:
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
-    with out.open("w", encoding="utf-8") as fh:
+    with out.open("w", encoding="utf-8") as fh:  # noqa: ASYNC230 —— 一次性离线探针
         for q in questions:
             row = {"id": q.id, "kind": q.kind, "query": q.query,
                    "expectation": q.expectation, "verdict": None, "hits": []}

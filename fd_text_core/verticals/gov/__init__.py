@@ -79,10 +79,10 @@ PRESETS = {
 # 层级标记：与解析器同一套（切块要在文本上重新定位它们）
 # 「第X条」是令/办法/条例体裁的层级（实测「财政部令第116号」含 30 处），
 # 不认它则整篇退化成一块、丢掉条级定位能力——与解析器 _RE_SEC_TIAO 对应。
-_RE_TIAO = re.compile(r"^\s*第[一二三四五六七八九十百]+条\s*", re.M)
-_RE_L1 = re.compile(r"^\s*[一二三四五六七八九十百]+\s*[、.．]", re.M)
-_RE_L2 = re.compile(r"^\s*[（(]\s*[一二三四五六七八九十百]+\s*[）)]", re.M)
-_RE_L3 = re.compile(r"^\s*\d{1,3}\s*[.．、]", re.M)
+_RE_TIAO = re.compile(r"^\s*第[一二三四五六七八九十百]+条\s*", re.MULTILINE)
+_RE_L1 = re.compile(r"^\s*[一二三四五六七八九十百]+\s*[、.．]", re.MULTILINE)
+_RE_L2 = re.compile(r"^\s*[（(]\s*[一二三四五六七八九十百]+\s*[）)]", re.MULTILINE)
+_RE_L3 = re.compile(r"^\s*\d{1,3}\s*[.．、]", re.MULTILINE)
 _RE_SENT = re.compile(r"(?<=[。！？；])")
 
 

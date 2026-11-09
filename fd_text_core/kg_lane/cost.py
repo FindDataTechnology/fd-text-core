@@ -98,7 +98,7 @@ class CostLedger:
             fh.write(rec.to_jsonl() + "\n")
         return rec
 
-    def load_existing(self) -> "CostLedger":
+    def load_existing(self) -> CostLedger:
         """把已有 JSONL 读回内存（续跑/跨进程汇总时必须，否则 aggregate 只看本次）。"""
         if not self.path.exists():
             return self

@@ -11,8 +11,8 @@ import re
 import time
 import urllib.request
 import xml.etree.ElementTree as ET
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
-from typing import Callable, Iterator
 
 OAI_BASE = "https://oaipmh.arxiv.org/oai"
 NS = {"oai": "http://www.openarchives.org/OAI/2.0/"}

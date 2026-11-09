@@ -9,8 +9,8 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Iterable
 
 # 常见 LaTeX 噪声：注释、简单宏、内联数学标记（保留文本内容）
 _TEX_COMMENT = re.compile(r"(?<!\\)%[^\n]*")
@@ -23,7 +23,7 @@ _TEX_KNOWN_CMDS = re.compile(
 _TEX_BRACES_ARG = re.compile(r"\\[a-zA-Z]+\*?(?:\s*\[[^\]]*\])?\s*\{")
 _MATH_INLINE = re.compile(r"\$([^$]*)\$")
 _BEGIN_END_SKIP = re.compile(
-    r"\\(?:begin|end)\{(?:document|figure\*?|table\*?|tikzpicture|center|abstract)\}", re.I
+    r"\\(?:begin|end)\{(?:document|figure\*?|table\*?|tikzpicture|center|abstract)\}", re.IGNORECASE
 )
 
 
@@ -70,7 +70,7 @@ def detex(tex: str) -> str:
 
 
 _SECTION_CMD = re.compile(
-    r"\\(section|subsection|subsubsection)\*?\{([^}]*)\}", re.M
+    r"\\(section|subsection|subsubsection)\*?\{([^}]*)\}", re.MULTILINE
 )
 
 
@@ -80,7 +80,7 @@ def parse_latex(tex: str) -> ParsedPaper:
     m = re.search(r"\\title\*?\{([^}]*)\}", tex)
     if m:
         out.title = detex(m.group(1))
-    m = re.search(r"\\begin\{abstract\}(.*?)\\end\{abstract\}", tex, re.S)
+    m = re.search(r"\\begin\{abstract\}(.*?)\\end\{abstract\}", tex, re.DOTALL)
     if m:
         out.abstract = detex(m.group(1))
 
@@ -108,7 +108,7 @@ _SECTION_MARKERS = re.compile(
     r"(abstract|introduction|related work|background|method(?:ology)?|"
     r"model|experiment(?:s|al setup)?|results?|discussion|conclusion(?:s)?|"
     r"references|acknowledg(?:e)?ment(?:s)?)\s*$",
-    re.I | re.M,
+    re.IGNORECASE | re.MULTILINE,
 )
 
 

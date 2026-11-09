@@ -9,9 +9,8 @@ claim-ledger：一次认领一批 pending 任务并置 claimed，成功后置 fi
 """
 from __future__ import annotations
 
-import os
-
 import math
+import os
 from dataclasses import dataclass
 
 from . import coldstore
@@ -61,7 +60,7 @@ def run_self_check(embedder: Embedder, model: str, *, bootstrap_text: str | None
     text = bootstrap_text or "fd-text-core 嵌入自检锚点 · embedding self-check anchor"
     try:
         vec = embedder.embed([text]).vectors[0]
-    except Exception as exc:  # noqa: BLE001 —— 探针答不上 ≠ 模型漂移
+    except Exception as exc:
         raise SelfCheckUnavailable(str(exc)[:200]) from exc
     if anchor is None:
         execute(
@@ -173,9 +172,9 @@ def _tsv_config(domain: str) -> str:
     此前实现完全忽略 domain、只读环境变量，与查询侧读垂域配置的行为不一致
     ——两处配置面分裂会让写入与查询用不同分词器，正是要防的静默失配。
     """
-    from .verticals.registry import get
-
     import os
+
+    from .verticals.registry import get
 
     try:
         v = get(domain)

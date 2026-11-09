@@ -29,10 +29,12 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
-from fd_text_core import embed_worker as W  # noqa: E402
-from fd_text_core.db import execute, fetch_one  # noqa: E402
-from fd_text_core.embedding import Embedder  # noqa: E402
-from fd_text_core.embedding import provider_from_env  # noqa: E402
+from fd_text_core import embed_worker as W
+from fd_text_core.db import execute, fetch_one
+from fd_text_core.embedding import (
+    Embedder,
+    provider_from_env,
+)
 
 
 def step1_verify_channel(emb: Embedder, dim: int) -> None:

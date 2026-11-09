@@ -20,12 +20,13 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
-from fd_text_core import embed_worker  # noqa: E402
-from fd_text_core.ingest import Doc, load_documents  # noqa: E402
-from fd_text_core.provenance import Provenance  # noqa: E402
-from fd_text_core.verticals.screenplay import harvest as S  # noqa: E402
+from fd_text_core import embed_worker
+from fd_text_core.ingest import Doc, load_documents
+from fd_text_core.provenance import Provenance
+from fd_text_core.verticals.screenplay import harvest as S
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from load_papers import build_embedder  # noqa: E402
+from load_papers import build_embedder
 
 # (采集函数, 参数, tradition, language, period, 说明)
 # Gutenberg ID 逐一实取首页核实过标题与作者（2026-10-11）；
@@ -81,7 +82,7 @@ def main() -> int:
         label = f"{fn.__name__}({arg})"
         try:
             play = fn(arg, polite=polite)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             rejected.append((label, f"采集失败: {str(exc)[:120]}"))
             print(f"[skip] {label}: {str(exc)[:120]}")
             continue

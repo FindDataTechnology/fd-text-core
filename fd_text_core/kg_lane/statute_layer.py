@@ -60,26 +60,27 @@ import asyncio
 import re
 import uuid as uuid_mod
 from collections import Counter
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Iterable, Mapping
+from typing import Any
 
 from .merge import canonical_name, inline_docno, normalize, normalize_docno_issuer
 
 __all__ = [
-    "EffectiveInfo",
     "AmendInfo",
+    "DocNumberInfo",
+    "EffectiveInfo",
     "ParsedStatute",
     "StatuteGraphPlan",
     "StatuteGraphWriter",
     "attach_name_embeddings",
     "build_statute_graph",
+    "cn2int",
     "degraded_embedding_report",
     "field_date",
-    "cn2int",
-    "resolve_effective",
     "parse_doc_numbers",
-    "DocNumberInfo",
+    "resolve_effective",
 ]
 
 HEAD_CHARS = 600  # 正文头部窗口：通过日期句式在此解析
@@ -346,7 +347,7 @@ def parse_amendment(title: str) -> AmendInfo:
         targets = tuple(dict.fromkeys(_BOOK_TITLE_ALL.findall(t)))
         return AmendInfo("modify_decision", targets)
     if "修正案" in t or "修订案" in t:
-        idx = min((t.find(k) for k in ("修正案", "修订案") if k in t))
+        idx = min(t.find(k) for k in ("修正案", "修订案") if k in t)
         host = t[:idx].strip()
         if host:
             return AmendInfo("amendment_bill", (host,))
@@ -1015,7 +1016,7 @@ SET r.name = row.name, r.fact = row.fact, r.group_id = row.group_id,
         self.password = password
         self._graph: Any = None
 
-    def connect(self) -> "StatuteGraphWriter":
+    def connect(self) -> StatuteGraphWriter:
         """建立 bolt 连接并显式 select_graph(group_id)。
 
         远端实例带 `requirepass` 时必须给 username/password（graphiti 的
@@ -1134,7 +1135,7 @@ def attach_name_embeddings(plan: StatuteGraphPlan, embedder: Any, *,
                     raise ValueError(
                         f"vector count mismatch: got {len(vectors)}, expected {len(batch)}")
                 vecs = [[float(x) for x in vec] for vec in vectors]
-            except Exception as exc:  # 降级而非中断：报告里必须留痕
+            except Exception as exc:  # 降级而非中断：报告里必须留痕  # noqa: BLE001
                 report["failed_batches"] += 1
                 report["degraded"] += len(batch)
                 if len(report["errors"]) < 5:

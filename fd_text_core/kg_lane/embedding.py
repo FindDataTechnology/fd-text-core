@@ -40,7 +40,7 @@ async def _with_retry(call):
     for attempt in range(1, RETRY_ATTEMPTS + 1):
         try:
             return await call()
-        except Exception as exc:  # noqa: BLE001 - 按类型/状态码判可重试性
+        except Exception as exc:
             status = getattr(exc, "status_code", None) or getattr(
                 getattr(exc, "response", None), "status_code", None)
             retryable = status is None or status >= 500
@@ -61,7 +61,7 @@ class EmbeddingSettings:
     # 直连多上游服务商时才需要填（否则向量会抖）。
     provider_only: str = ""
 
-    def require(self) -> "EmbeddingSettings":
+    def require(self) -> EmbeddingSettings:
         missing = [
             name
             for name, value in (("base_url", self.base_url), ("api_key", self.api_key))
@@ -83,10 +83,10 @@ def build_embedder(settings: EmbeddingSettings, client=None):
         from graphiti_core.embedder.client import EmbedderClient as _Base
     except ModuleNotFoundError:  # pragma: no cover - 无 graphiti 环境走这里
         class _Base:  # type: ignore[no-redef]
-            async def create(self, input_data):  # noqa: ANN001
+            async def create(self, input_data):
                 raise NotImplementedError
 
-            async def create_batch(self, input_data_list):  # noqa: ANN001
+            async def create_batch(self, input_data_list):
                 raise NotImplementedError
 
     class _ServerMRLEmbedder(_Base):

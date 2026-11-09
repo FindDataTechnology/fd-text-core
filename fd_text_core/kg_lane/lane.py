@@ -231,10 +231,8 @@ class MergingLLMClient(_LLMClientBase):  # type: ignore[misc,valid-type]
     def _rewrite(self, prompt_name: str, response: Any) -> Any:
         if not isinstance(response, dict):
             return response
-        nodes = prompt_name.startswith("extract_nodes") or \
-            prompt_name.startswith("extract_nodes_and_edges")
-        edges = prompt_name.startswith("extract_edges") or \
-            prompt_name.startswith("extract_nodes_and_edges")
+        nodes = prompt_name.startswith(("extract_nodes", "extract_nodes_and_edges"))
+        edges = prompt_name.startswith(("extract_edges", "extract_nodes_and_edges"))
         if nodes and isinstance(response.get("extracted_entities"), list):
             response = {**response,
                         "extracted_entities": self._merger.rewrite_entity_payload(
@@ -319,7 +317,7 @@ def build_corpus_index(episodes: list[dict[str, Any]]) -> dict[str, dict[str, An
 
 
 def build_lane(cfg: cfg_mod.KGVerticalConfig, settings: LaneSettings, *,
-               graphiti: Any = None) -> "KGLane":
+               graphiti: Any = None) -> KGLane:
     """装配一条可跑的垂域车道。"""
     cfg.validate()
     ledger = cost_mod.CostLedger(settings.cost_ledger_path).load_existing()

@@ -58,3 +58,11 @@ fd_text_core = ["data/*.json", "eval/datasets/**/*.json", "kg_lane/verticals/*.j
 [tool.ruff]
 line-length = 120
 target-version = "py310"
+
+[tool.ruff.lint.per-file-ignores]
+# `seen` counts rows *yielded*, not loop iterations: enumerate() would be wrong the
+# moment the body skipped one, so the counter stays explicit.
+"fd_text_core/ingest.py" = ["SIM113"]
+# The stub declares __enter__ as returning the class (not Self) because callers
+# annotate it that way; changing it would ripple through the benchmark types.
+"scripts/bench_ingest_batch.py" = ["PYI034"]

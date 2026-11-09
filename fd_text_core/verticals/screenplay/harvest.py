@@ -11,8 +11,8 @@ from __future__ import annotations
 import re
 import time
 import urllib.request
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable
 
 UA = "fd-text-core/0.1 (public-domain corpus collection)"
 DEFAULT_INTERVAL = 1.5
@@ -79,9 +79,7 @@ def looks_copyrighted(text: str) -> bool:
     if any(m in head for m in REJECT_MARKERS):
         return True
     # 现代版权页形态："©" + 年份（单说 © 太宽，古典文本转录里也可能出现）
-    if "©" in head and _YEAR_RE.search(head):
-        return True
-    return False
+    return "©" in head and bool(_YEAR_RE.search(head))
 
 
 _TAG = re.compile(r"<[^>]+>")
@@ -130,7 +128,7 @@ def fetch_gutenberg(book_id: str, *, polite: Polite | None = None, fetcher: Call
     if looks_copyrighted(text):
         raise HarvestError(f"gutenberg {book_id} 疑似仍在版权期，拒收")
     title = ""
-    m = re.search(r"^Title:\s*(.+)$", text, re.M)
+    m = re.search(r"^Title:\s*(.+)$", text, re.MULTILINE)
     if m:
         title = m.group(1).strip()
     return Play(
@@ -156,7 +154,7 @@ def _wikisource_api(params: dict, fetcher: Callable | None) -> dict:
             time.sleep(5.0 * (2 ** (attempt - 1)))  # 5/10/20/40s
         try:
             return json.loads(get(url))
-        except Exception as exc:  # URLError / HTTPError 429 / SSL EOF
+        except Exception as exc:  # URLError / HTTPError 429 / SSL EOF  # noqa: BLE001
             last = exc
     raise HarvestError(f"wikisource API 重试 5 次仍失败: {last}")
 
@@ -189,7 +187,7 @@ def _wikisource_extract(title: str, fetcher: Callable | None) -> tuple[str, str]
         },
         fetcher,
     )
-    for _pid, pg in ((data.get("query") or {}).get("pages") or {}).items():
+    for pg in ((data.get("query") or {}).get("pages") or {}).values():
         return pg.get("title") or title, pg.get("extract") or ""
     return title, ""
 
@@ -365,7 +363,7 @@ def fetch_xikao(page: str, *, polite: Polite | None = None, fetcher: Callable | 
     if looks_copyrighted(html):
         raise HarvestError(f"xikao {page} 疑似仍在版权期，拒收")
     title = page
-    m = re.search(r"<title>(.*?)</title>", html, re.S | re.I)
+    m = re.search(r"<title>(.*?)</title>", html, re.DOTALL | re.IGNORECASE)
     if m:
         title = re.sub(r"\s*[-|]\s*.*$", "", m.group(1)).strip() or page
     return Play(

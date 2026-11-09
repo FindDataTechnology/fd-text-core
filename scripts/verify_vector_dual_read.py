@@ -85,10 +85,10 @@ def collect(conn) -> dict:
                 )
                 # PSQL 参数化：把具体的探针取值嵌入子查
                 idx_ids = fetch_topk(
-                    cur, dom, probe_sql % ("'%s'" % dom, "'%s'" % p), "index", K
+                    cur, dom, probe_sql % ("'%s'" % dom, "'%s'" % p), "index", K  # noqa: UP031
                 )
                 seq_ids = fetch_topk(
-                    cur, dom, probe_sql % ("'%s'" % dom, "'%s'" % p), "seqscan", K
+                    cur, dom, probe_sql % ("'%s'" % dom, "'%s'" % p), "seqscan", K  # noqa: UP031
                 )
                 out[dom].append({"probe": p, "index": idx_ids, "seqscan": seq_ids})
     return out

@@ -135,7 +135,7 @@ def check_lossless(sample: int = 20) -> None:
             " WHERE status='current' AND content IS NOT NULL ORDER BY id DESC LIMIT %s)",
             (sample, sample),
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         v("无损切块", f"无法连接数据库执行校验：{type(exc).__name__}: {exc}")
         rec("无损切块", "FAIL", f"连接异常：{type(exc).__name__}")
         return
@@ -150,7 +150,7 @@ def check_lossless(sample: int = 20) -> None:
         if d["cold_block_key"]:
             try:
                 text = coldstore.get_block(d["cold_block_key"])
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 v("无损切块", f"doc {d['id']} 冷存读取失败：{exc}")
                 continue
         elif d["content"]:
@@ -164,7 +164,7 @@ def check_lossless(sample: int = 20) -> None:
                 "SELECT chunk_no, chunk_text, char_start, char_end FROM corpus_chunks "
                 "WHERE document_id=%s ORDER BY chunk_no", (d["id"],)
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             v("无损切块", f"doc {d['id']} 读取失败：{exc}")
             continue
         if not rows:
@@ -197,7 +197,7 @@ def check_provenance() -> None:
             "  OR provenance->>'stable_id' IS NULL OR provenance->>'stable_id'=''"
             "  OR provenance->>'as_of' IS NULL OR provenance->>'as_of'='')"
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         v("provenance", f"无法执行校验：{type(exc).__name__}: {exc}")
         rec("provenance", "FAIL", f"连接异常：{type(exc).__name__}")
         return
@@ -230,7 +230,7 @@ def check_anchor() -> None:
         if sim < W.SIMILARITY_FLOOR:
             v("锚点余弦", f"{sim:.6f} < {W.SIMILARITY_FLOOR}：模型或通道漂移｜修复=确认模型后重建向量或回滚")
         _print_result_with_detail("锚点余弦", f"{sim:.6f}")
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         v("锚点余弦", f"自检异常：{type(exc).__name__}: {exc}")
         # 自检跑到底且 sim 已算出时 _print_result_with_detail 已登记结果，不重复登记
         if not _observed("锚点余弦"):
@@ -259,7 +259,7 @@ def _declared_index_names() -> set[str]:
             names.add(m.group(1))
         # 变量名形式的索引名（如 INDEX_NAME = "ix_chunks_embedding_hnsw"）
         for m in re.finditer(
-            r'^\s*(?:INDEX_NAME|[A-Z_]*NAME)\s*=\s*["\']([A-Za-z_]\w*)["\']', text, re.M
+            r'^\s*(?:INDEX_NAME|[A-Z_]*NAME)\s*=\s*["\']([A-Za-z_]\w*)["\']', text, re.MULTILINE
         ):
             names.add(m.group(1))
         # f-string / 变量拼接的名字（如 f"{part}_embedding_hnsw"）取后缀常量兜底
@@ -293,7 +293,7 @@ def _inherited_index_names(url: str) -> set[str]:
                 "WHERE c.relkind = 'i'"
             )
             return {r[0] for r in cur.fetchall()}
-    except Exception:
+    except Exception:  # noqa: BLE001
         return set()
 
 
@@ -309,7 +309,7 @@ def _index_explained(idx_name: str, declared: set[str]) -> bool:
     if idx_name in declared:
         return True
     # 约束类自动索引（主键 / 唯一约束）
-    if idx_name.endswith("_pkey") or idx_name.endswith("_key"):
+    if idx_name.endswith(("_pkey", "_key")):
         return True
     # 分区索引由母表索引自动派生：名字形如 <分区表名>_<母表索引后缀>。
     # 迁移里只声明母表索引名（ix_chunks_tsv / ix_chunks_embedding_hnsw 等），
@@ -321,10 +321,9 @@ def _index_explained(idx_name: str, declared: set[str]) -> bool:
     # embedding_hnsw 根本同名不上）。故只做宽松兜底：索引名含迁移声明名的核心段。
     cores: set[str] = set()
     for d in declared:
-        name = d[3:] if d.startswith("ix_") else d
+        name = d.removeprefix("ix_")
         for tbl in ("chunks_", "corpus_documents_", "embed_tasks_", "corpus_chunks_"):
-            if name.startswith(tbl):
-                name = name[len(tbl):]
+            name = name.removeprefix(tbl)
         if name:
             cores.add(name)
     cores |= declared
@@ -408,7 +407,7 @@ def check_schema_drift() -> None:
                 "WHERE c.relkind='i' AND n.nspname='public'"
             )
             actual_idx = {r[0] for r in cur.fetchall()}
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         v("schema 漂移", f"无法读取 schema：{type(exc).__name__}: {exc}")
         rec("schema 漂移", "FAIL", f"连接异常：{type(exc).__name__}")
         return
@@ -490,7 +489,7 @@ def vertical_commit_files(commits: list[str]) -> list[str]:
     for c in commits:
         out = subprocess.run(
             ["git", "show", "--name-only", "--format=", c], cwd=REPO,
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, timeout=30, check=False,
         )
         files.extend(line for line in out.stdout.splitlines() if line.strip())
     return files
@@ -532,9 +531,8 @@ def check_retrieval_eval(domain: str | None, k: int = 10, variant: str = "defaul
     # （实测：三次调用都打印第一域的行、摘要里同名三次）。
     section = f"检索评测[{domain}]" if variant == "default" else f"检索评测[{domain}:{variant}]"
     try:
-        from fd_text_core.eval import DatasetError, load_dataset
-        from fd_text_core.eval import runner, store
-    except Exception as exc:  # eval 包不可导入（异常安装）：如实报 FAIL
+        from fd_text_core.eval import DatasetError, load_dataset, runner, store
+    except Exception as exc:  # eval 包不可导入（异常安装）：如实报 FAIL  # noqa: BLE001
         v(section, f"评测模块不可导入：{type(exc).__name__}: {exc}")
         rec(section, "FAIL", f"导入异常：{type(exc).__name__}")
         return
@@ -555,7 +553,7 @@ def check_retrieval_eval(domain: str | None, k: int = 10, variant: str = "defaul
 
     try:
         rep = runner.run_eval(ds, k=k, embedder=emb, check_expects=store.check_expects_exist)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         v(section, f"跑分异常：{type(exc).__name__}: {exc}")
         rec(section, "FAIL", f"跑分异常：{type(exc).__name__}")
         return
@@ -662,7 +660,7 @@ def check_corpus_reconcile() -> None:
                     v("语料对账",
                       f"库内 current 有 {src}:{sid}（domain={domain}）但 {loader} 未声明"
                       "｜修复=把该条补进 loader 的 SOURCES（库是权威）")
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         v("语料对账", f"无法执行对账：{type(exc).__name__}: {exc}")
         rec("语料对账", "FAIL", f"连接异常：{type(exc).__name__}")
         return
@@ -698,10 +696,10 @@ def _changed_files(base_ref: str) -> list[str]:
     try:
         out = subprocess.run(
             ["git", "diff", "--name-only", base_ref], cwd=REPO,
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, timeout=30, check=False,
         )
         return [line for line in out.stdout.splitlines() if line.strip()]
-    except Exception:
+    except Exception:  # noqa: BLE001
         return []
 
 
@@ -762,7 +760,7 @@ def cli() -> int:
                      f"variant={args.eval_variant} 的标注集（包内无任何域交付）")
             for _d in _runnable:
                 check_retrieval_eval(_d, variant=args.eval_variant)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             v("检索评测", f"枚举标注集失败：{type(exc).__name__}: {exc}")
             rec("检索评测", "FAIL", f"枚举异常：{type(exc).__name__}")
     else:

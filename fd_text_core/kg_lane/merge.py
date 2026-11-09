@@ -18,8 +18,9 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any
 
 # 中文条号：第四百二十四条 / 第313条 / 第十二条之一
 _ARTICLE = re.compile(r"第[0-9零一二三四五六七八九十百千]+条(?:之[一二三四五六七八九十]+)?")

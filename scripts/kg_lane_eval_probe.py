@@ -20,10 +20,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from fd_text_core.kg_lane import config as cfg_mod  # noqa: E402
-from fd_text_core.kg_lane import cost as cost_mod  # noqa: E402
-from fd_text_core.kg_lane import eval as eval_mod  # noqa: E402
-from fd_text_core.kg_lane import lane as lane_mod  # noqa: E402
+from fd_text_core.kg_lane import config as cfg_mod
+from fd_text_core.kg_lane import cost as cost_mod
+from fd_text_core.kg_lane import eval as eval_mod
+from fd_text_core.kg_lane import lane as lane_mod
 
 
 def load_episodes(path: str) -> list[dict]:
@@ -58,7 +58,7 @@ async def main() -> int:
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
-    with out.open("w", encoding="utf-8") as fh:
+    with out.open("w", encoding="utf-8") as fh:  # noqa: ASYNC230 —— 一次性离线探针
         for q in questions:
             evidence: list[dict] = []
             as_of = None

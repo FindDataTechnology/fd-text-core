@@ -20,9 +20,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from fd_text_core.kg_lane import config as cfg_mod  # noqa: E402
-from fd_text_core.kg_lane import cost as cost_mod  # noqa: E402
-from fd_text_core.kg_lane import lane as lane_mod  # noqa: E402
+from fd_text_core.kg_lane import config as cfg_mod
+from fd_text_core.kg_lane import cost as cost_mod
+from fd_text_core.kg_lane import lane as lane_mod
 
 
 def load_state(path: str) -> dict:

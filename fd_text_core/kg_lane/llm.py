@@ -308,9 +308,7 @@ def _list_fields(response_model: Any) -> tuple[str, ...]:
         # list[X] -> (X,)；list[X] | None -> (list[X], NoneType)
         if getattr(ann, "__origin__", None) is list or any(
             getattr(a, "__origin__", None) is list for a in args
-        ):
-            out.append(name)
-        elif typing.get_origin(ann) is typing.Union and any(
+        ) or typing.get_origin(ann) is typing.Union and any(
             typing.get_origin(a) is list for a in args
         ):
             out.append(name)
@@ -382,7 +380,7 @@ def build_llm_client(settings: LLMSettings, client=None, hint_mode: bool = False
                 raise RateLimitError from exc
             except (EmptyResponseError, RateLimitError, ValueError):
                 raise
-            except Exception as exc:  # noqa: BLE001 - 保留父类的分类语义
+            except Exception as exc:
                 logger.error("Error in generating LLM response: %s", exc)
                 raise
 

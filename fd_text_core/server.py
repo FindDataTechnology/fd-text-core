@@ -199,7 +199,7 @@ for _d in list_verticals():
 
 # KG 车道查询工具族（kg-lane-delivery-v1 D4）：引擎级新增族，实现全部转发
 # kg_lane/query.py 既有查询面，不触碰上面 <domain>_* 既有工具的契约与行为。
-from .kg_tools import register_kg_tools  # noqa: E402
+from .kg_tools import register_kg_tools
 
 register_kg_tools(mcp, _err=_err)
 

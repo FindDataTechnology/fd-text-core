@@ -6,8 +6,9 @@
 from __future__ import annotations
 
 import threading
+from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Any, Iterator
+from typing import Any
 
 from psycopg_pool import ConnectionPool
 
@@ -49,7 +50,7 @@ def reset_pool() -> None:
         if _pool is not None:
             try:
                 _pool.close()
-            except Exception:
+            except Exception:  # noqa: S110, BLE001 —— 关池失败不影响后续
                 pass
         _pool = None
 

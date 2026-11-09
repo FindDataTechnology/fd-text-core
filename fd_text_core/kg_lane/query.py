@@ -98,9 +98,7 @@ def fact_valid_at(edge: EdgeRecord, at: datetime) -> bool:
     at = _as_utc(at)
     if edge.valid_at is not None and at < _as_utc(edge.valid_at):
         return False
-    if edge.invalid_at is not None and at >= _as_utc(edge.invalid_at):
-        return False
-    return True
+    return not (edge.invalid_at is not None and at >= _as_utc(edge.invalid_at))
 
 
 @dataclass

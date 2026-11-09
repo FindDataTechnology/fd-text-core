@@ -16,8 +16,9 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Protocol, Literal
+from typing import Any, Literal, Protocol
 
 DEFAULT_TIMEOUT = 60.0
 
@@ -40,7 +41,7 @@ def load_questions(path: str) -> list[EvalQuestion]:
     if isinstance(raw, dict) and "questions" in raw:
         raw = raw["questions"]
     if not isinstance(raw, list):
-        raise ValueError("questions file must be a list or {'questions': [...]}")
+        raise TypeError("questions file must be a list or {'questions': [...]}")
     out = []
     for item in raw:
         kind = item.get("kind")
@@ -83,8 +84,7 @@ class EvalReport:
 
     def to_jsonl(self, path: str) -> None:
         with open(path, "w", encoding="utf-8") as fh:
-            for r in self.results:
-                fh.write(json.dumps(r.to_dict(), ensure_ascii=False) + "\n")
+            fh.writelines(json.dumps(r.to_dict(), ensure_ascii=False) + "\n" for r in self.results)
 
     @staticmethod
     def _hit(evidence: list[Any]) -> bool:
@@ -94,9 +94,7 @@ class EvalReport:
         first = evidence[0]
         if isinstance(first, dict) and "error" in first:
             return False
-        if isinstance(first, str) and first.strip().startswith('{"error"'):
-            return False
-        return True
+        return not (isinstance(first, str) and first.strip().startswith('{"error"'))
 
     def summary(self) -> dict[str, Any]:
         by_kind: dict[str, dict[str, int]] = {}

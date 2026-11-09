@@ -109,14 +109,14 @@ _LABEL_ALIASES = {
 # 实测教训：泛化的 `article|detail|zoom` 若排在前面，会命中只含标题与分享按钮的
 # 外层容器（www.mnr.gov.cn 的 ky_article：90 字符），正文全丢且无任何报错。
 _BODY_CONTAINER_PATTERNS = (
-    re.compile(r'<div[^>]*id="content"[^>]*>', re.I),
-    re.compile(r'<div[^>]*id="content1"[^>]*>', re.I),
-    re.compile(r'<div[^>]*id="doccon"[^>]*>', re.I),
-    re.compile(r'<div[^>]*class="[^"]*TRS_Editor[^"]*"[^>]*>', re.I),
-    re.compile(r'<div[^>]*class="[^"]*box_content[^"]*"[^>]*>', re.I),
-    re.compile(r'<div[^>]*id="Zoom"[^>]*>', re.I),
-    re.compile(r'<div[^>]*class="[^"]*(?:article_con|detail_con|zoom)[^"]*"[^>]*>', re.I),
-    re.compile(r'<div[^>]*class="[^"]*(?:article|detail)[^"]*"[^>]*>', re.I),
+    re.compile(r'<div[^>]*id="content"[^>]*>', re.IGNORECASE),
+    re.compile(r'<div[^>]*id="content1"[^>]*>', re.IGNORECASE),
+    re.compile(r'<div[^>]*id="doccon"[^>]*>', re.IGNORECASE),
+    re.compile(r'<div[^>]*class="[^"]*TRS_Editor[^"]*"[^>]*>', re.IGNORECASE),
+    re.compile(r'<div[^>]*class="[^"]*box_content[^"]*"[^>]*>', re.IGNORECASE),
+    re.compile(r'<div[^>]*id="Zoom"[^>]*>', re.IGNORECASE),
+    re.compile(r'<div[^>]*class="[^"]*(?:article_con|detail_con|zoom)[^"]*"[^>]*>', re.IGNORECASE),
+    re.compile(r'<div[^>]*class="[^"]*(?:article|detail)[^"]*"[^>]*>', re.IGNORECASE),
 )
 
 # 站点框架杂质：候选容器里出现这些词说明选到了页脚/导航/排行榜而非正文。
@@ -132,10 +132,10 @@ _ORG_SUFFIX = re.compile(
     r"(部|委|委员会|总局|总署|署|局|厅|政府|办公厅|办公室|公署|院|中心|司|处|科|行|会|组|社)$"
 )
 
-_RE_SCRIPT_STYLE = re.compile(r"<(script|style)[^>]*>.*?</\1>", re.I | re.S)
+_RE_SCRIPT_STYLE = re.compile(r"<(script|style)[^>]*>.*?</\1>", re.IGNORECASE | re.DOTALL)
 _RE_TAG = re.compile(r"<[^>]+>")
-_RE_ATTR_HREF = re.compile(r'href="([^"]+)"', re.I)
-_RE_ATTACH_EXT = re.compile(r"\.(pdf|docx?|xlsx?|pptx?|zip|rar)$", re.I)
+_RE_ATTR_HREF = re.compile(r'href="([^"]+)"', re.IGNORECASE)
+_RE_ATTACH_EXT = re.compile(r"\.(pdf|docx?|xlsx?|pptx?|zip|rar)$", re.IGNORECASE)
 
 
 @dataclass
@@ -175,7 +175,7 @@ def _clean_text(html: str) -> str:
     """去脚本/样式与标签，归一空白。保留段落边界（\\n）以便层级识别。"""
     s = _RE_SCRIPT_STYLE.sub(" ", html)
     # 块级标签转换行，保住段落
-    s = re.sub(r"</?(?:p|div|br|tr|li|h[1-6])[^>]*>", "\n", s, flags=re.I)
+    s = re.sub(r"</?(?:p|div|br|tr|li|h[1-6])[^>]*>", "\n", s, flags=re.IGNORECASE)
     s = _RE_TAG.sub("", s)
     s = (
         s.replace("&nbsp;", " ")
@@ -197,7 +197,7 @@ def _extract_labeled_values(html: str) -> dict[str, str]:
     值里的 `<!--...-->` 注释与多余空白一并剥掉。
     """
     out: dict[str, str] = {}
-    tds = re.findall(r"<td[^>]*>(.*?)</td>", html, re.I | re.S)
+    tds = re.findall(r"<td[^>]*>(.*?)</td>", html, re.IGNORECASE | re.DOTALL)
     for i in range(len(tds) - 1):
         label = _clean_text(tds[i]).replace(" ", "")
         value = _clean_text(tds[i + 1])
@@ -231,7 +231,7 @@ def _find_body_container(html: str) -> str:
         # 平衡 div 截取：从容器开标签后开始数嵌套
         depth = 1
         pos = start
-        for tag in re.finditer(r"<(/?)div\b[^>]*>", html[start:], re.I):
+        for tag in re.finditer(r"<(/?)div\b[^>]*>", html[start:], re.IGNORECASE):
             if tag.group(1):
                 depth -= 1
             else:
@@ -293,12 +293,12 @@ def _clean_title(raw: str | None) -> str | None:
 def _meta_content(html: str, name: str) -> str | None:
     """取 `<meta name="X" content="...">` 的值（属性顺序两种都容忍）。"""
     pat = re.compile(
-        rf'<meta[^>]+name=["\']{name}["\'][^>]*content=["\']([^"\']*)["\']', re.I
+        rf'<meta[^>]+name=["\']{name}["\'][^>]*content=["\']([^"\']*)["\']', re.IGNORECASE
     )
     m = pat.search(html)
     if not m:
         pat2 = re.compile(
-            rf'<meta[^>]+content=["\']([^"\']*)["\'][^>]*name=["\']{name}["\']', re.I
+            rf'<meta[^>]+content=["\']([^"\']*)["\'][^>]*name=["\']{name}["\']', re.IGNORECASE
         )
         m = pat2.search(html)
     return (m.group(1).strip() or None) if m else None
@@ -450,7 +450,7 @@ def parse_gov_doc(html: str) -> GovDoc:
     # 标题：<meta ArticleTitle>（干净）-> <title>（剥装饰）-> 元数据表「名称」
     doc.title = _clean_title(_meta_content(html, "ArticleTitle"))
     if not doc.title:
-        mt = re.search(r"<title>(.*?)</title>", html, re.I | re.S)
+        mt = re.search(r"<title>(.*?)</title>", html, re.IGNORECASE | re.DOTALL)
         if mt:
             doc.title = _clean_title(mt.group(1))
     if labeled.get("title"):
@@ -529,7 +529,7 @@ def parse_gov_doc(html: str) -> GovDoc:
 
     # 附件：按扩展名识别，相对路径转绝对（需调用方给 base_url 时才转，此处留原样）
     att_seen = set()
-    for m in re.finditer(r'<a[^>]*href="([^"]+)"[^>]*>(.*?)</a>', html, re.I | re.S):
+    for m in re.finditer(r'<a[^>]*href="([^"]+)"[^>]*>(.*?)</a>', html, re.IGNORECASE | re.DOTALL):
         href, text = m.group(1), _clean_text(m.group(2))
         if _RE_ATTACH_EXT.search(href) and href not in att_seen:
             att_seen.add(href)

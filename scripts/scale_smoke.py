@@ -192,7 +192,7 @@ def _worker_loop(limit_per_round: int, max_rounds: int, worker_id: int, fake_emb
     for _ in range(max_rounds):
         try:
             res = run_once(emb, model, limit=limit_per_round)
-        except Exception as exc:  # 自检门拒绝等：如实报错退出该 worker
+        except Exception as exc:  # 自检门拒绝等：如实报错退出该 worker  # noqa: BLE001
             print(f"    [w{worker_id}] worker 异常退出：{type(exc).__name__}: {exc}", flush=True)
             break
         if res.claimed == 0:
@@ -266,7 +266,7 @@ def _fake_worker_loop(emb, limit_per_round: int, max_rounds: int, worker_id: int
                     (t["id"],),
                 )
                 totals["embedded"] += 1
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 execute(
                     "UPDATE embed_tasks SET state='failed', finished_at=now(), error=%s WHERE id=%s",
                     (str(exc)[:500], t["id"]),

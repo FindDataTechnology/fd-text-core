@@ -31,14 +31,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from fd_text_core.kg_lane import statute_layer as sl  # noqa: E402
-from fd_text_core.kg_lane.embedding import build_embedder  # noqa: E402
-from fd_text_core.kg_lane.merge import normalize_docno_issuer  # noqa: E402
-
-from kg_statute_build import (  # noqa: E402
+from kg_statute_build import (
     FETCH_SQL,
     embedding_settings_from_env,
 )
+
+from fd_text_core.kg_lane import statute_layer as sl
+from fd_text_core.kg_lane.embedding import build_embedder
+from fd_text_core.kg_lane.merge import normalize_docno_issuer
 
 # 名字末尾的括号文号（全角/半角）
 _PAREN = ("（", "(")

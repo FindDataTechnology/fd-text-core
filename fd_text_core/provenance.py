@@ -5,7 +5,7 @@
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import Any
 
@@ -17,7 +17,7 @@ class Provenance:
     as_of: str  # 索引时点 ISO8601
 
     @staticmethod
-    def now(source: str, stable_id: str, *, when: datetime | None = None) -> "Provenance":
+    def now(source: str, stable_id: str, *, when: datetime | None = None) -> Provenance:
         dt = when or datetime.now(timezone.utc)
         return Provenance(source=source, stable_id=stable_id, as_of=dt.isoformat())
 

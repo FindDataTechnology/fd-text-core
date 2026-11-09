@@ -19,9 +19,9 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
-from fd_text_core.db import execute, fetch_all, fetch_one  # noqa: E402
-from fd_text_core.tokenize import cjk_tokens_text  # noqa: E402
-from fd_text_core.verticals.registry import get as get_vertical  # noqa: E402
+from fd_text_core.db import execute, fetch_all, fetch_one
+from fd_text_core.tokenize import cjk_tokens_text
+from fd_text_core.verticals.registry import get as get_vertical
 
 
 def main() -> int:

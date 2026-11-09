@@ -14,8 +14,8 @@ import re
 from dataclasses import dataclass, field
 
 # 场景/幕/场/折/出：中英并列
-_RE_ACT_WEST = re.compile(r"^\s*(ACT|SCENE)\s+([IVXLC0-9]+|[A-Z0-9]+)\b[.:]?\s*(.*)$", re.I)
-_RE_SCENE_WEST = re.compile(r"^\s*(INT\.|EXT\.|INT\b|EXT\b)\s*[.:-]?\s*(.*)$", re.I)
+_RE_ACT_WEST = re.compile(r"^\s*(ACT|SCENE)\s+([IVXLC0-9]+|[A-Z0-9]+)\b[.:]?\s*(.*)$", re.IGNORECASE)
+_RE_SCENE_WEST = re.compile(r"^\s*(INT\.|EXT\.|INT\b|EXT\b)\s*[.:-]?\s*(.*)$", re.IGNORECASE)
 _RE_ACT_CN = re.compile(r"^\s*(?:={1,4}\s*)?第\s*([一二三四五六七八九十百零〇\d]+)\s*(折|出|幕|本|齣)\s*(?:={1,4})?\s*(.*)$")
 _RE_SCENE_CN_HEAD = re.compile(r"^\s*(?:={1,4}\s*)?(楔子|序幕|尾声)\s*(?:={1,4})?\s*(.*)$")
 _RE_SCENE_CN = re.compile(r"^\s*(?:={1,4}\s*)?(楔子|序幕|尾声|第\s*[一二三四五六七八九十百零〇\d]+\s*(?:折|出|幕|场|齣))\s*(?:={1,4})?\s*(.*)$")

@@ -22,11 +22,11 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
-from fd_text_core import embed_worker  # noqa: E402
-from fd_text_core.embedding import Embedder, provider_from_env  # noqa: E402
-from fd_text_core.ingest import Doc, load_documents  # noqa: E402
-from fd_text_core.provenance import Provenance  # noqa: E402
-from fd_text_core.verticals.papers import harvest as H  # noqa: E402
+from fd_text_core import embed_worker
+from fd_text_core.embedding import Embedder, provider_from_env
+from fd_text_core.ingest import Doc, load_documents
+from fd_text_core.provenance import Provenance
+from fd_text_core.verticals.papers import harvest as H
 
 
 class FakeEmbedder:

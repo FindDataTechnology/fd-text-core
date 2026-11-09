@@ -68,7 +68,7 @@ def _default_backend_factory():
     """
     global _factory_error
     try:
-        from graphiti_core import Graphiti  # noqa: F401
+        from graphiti_core import Graphiti
         from graphiti_core.driver.falkordb_driver import FalkorDriver
 
         from .kg_lane.lane import parse_uri
@@ -137,7 +137,6 @@ def _read_only_llm_stub():
 
 def _backend_or_error(_err):
     """取后端；取不到时返回 (None, 结构化错误)。"""
-    global _backend_factory, _factory_error
     factory = _backend_factory or _default_backend_factory
     try:
         backend = factory()

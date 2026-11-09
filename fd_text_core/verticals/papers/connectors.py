@@ -85,7 +85,7 @@ def _resolve_work_id(doi: str = "", work_id: str = "", *, mailto: str = "",
     url = f"{OPENALEX_API}?{urllib.parse.urlencode(params)}"
     try:
         data = _http_json(url, timeout=CITATION_TIMEOUT, headers=_polite_headers(mailto))
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         return "", _classify_http_error(exc, "openalex", "resolve")
     results = data.get("results") or []
     if not results:
@@ -112,7 +112,7 @@ def openalex_references(doi: str = "", work_id: str = "", *, mailto: str = "",
     url = f"{OPENALEX_API}/{wid}?{urllib.parse.urlencode(params)}"
     try:
         data = _http_json(url, timeout=CITATION_TIMEOUT, headers=_polite_headers(mailto))
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         return ConnectorResult(degraded=[_classify_http_error(exc, "openalex", "references")])
     refs = data.get("referenced_works") or []
     return ConnectorResult(
@@ -149,7 +149,7 @@ def openalex_citations(doi: str = "", work_id: str = "", limit: int = 10, *,
     url = f"{OPENALEX_API}?{urllib.parse.urlencode(params)}"
     try:
         data = _http_json(url, timeout=CITATION_TIMEOUT, headers=_polite_headers(mailto))
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         return ConnectorResult(degraded=[_classify_http_error(exc, "openalex", "citations")])
     out = []
     total = (data.get("meta") or {}).get("count")
@@ -182,7 +182,7 @@ def arxiv_search(query: str, limit: int = 10, *, throttler=None, fetcher=None) -
             req = urllib.request.Request(url, headers={"User-Agent": "fd-text-core/0.1"})
             with urllib.request.urlopen(req, timeout=30) as r:
                 root_text = r.read()
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         return ConnectorResult(degraded=[f"arxiv: {type(exc).__name__}: {exc}"])
     import xml.etree.ElementTree as ET
 
@@ -217,7 +217,7 @@ def openalex_search(query: str, limit: int = 10, *, mailto: str = "", api_key: s
     url = f"{OPENALEX_API}?{urllib.parse.urlencode(params)}"
     try:
         data = _http_json(url)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         return ConnectorResult(degraded=[f"openalex: {type(exc).__name__}: {exc}"])
     out = []
     for w in data.get("results", []):
@@ -240,7 +240,7 @@ def semantic_scholar_search(query: str, limit: int = 10, *, api_key: str = "") -
     headers = {"x-api-key": api_key} if api_key else {}
     try:
         data = _http_json(url, headers=headers)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         return ConnectorResult(degraded=[f"semantic_scholar: {type(exc).__name__}: {exc}"])
     out = []
     for p in data.get("data", []):

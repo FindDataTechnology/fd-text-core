@@ -10,10 +10,10 @@ from __future__ import annotations
 
 import os
 import re
-from typing import Callable, Iterable
+from collections.abc import Callable, Iterable
 
 from .db import UpstreamUnavailable, fetch_all, fetch_one
-from .embedding import EmbeddingUnavailable, Embedder
+from .embedding import Embedder, EmbeddingUnavailable
 from .provenance import require_triplet
 from .tokenize import cjk_tsquery
 from .verticals.registry import get as get_vertical

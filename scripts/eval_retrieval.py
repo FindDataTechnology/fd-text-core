@@ -21,12 +21,13 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
-from fd_text_core.eval import (  # noqa: E402
+from fd_text_core.eval import (
     DatasetError,
     list_datasets,
     load_dataset,
+    runner,
+    store,
 )
-from fd_text_core.eval import runner, store  # noqa: E402
 
 
 def _print_report(rep, *, show_rows: bool = True) -> None:
@@ -80,8 +81,8 @@ def _print_report(rep, *, show_rows: bool = True) -> None:
         for r in rep.rows:
             g = "G" if r.get("graded") else " "
             print(f"    [{r['intent']:14s}]{g} {r['q'][:30]:32s} "
-                  f"kw={str(r.get('keyword')):>4s} vec={str(r.get('vector')):>4s} "
-                  f"hyb={str(r.get('hybrid')):>4s}  "
+                  f"kw={r.get('keyword')!s:>4s} vec={r.get('vector')!s:>4s} "
+                  f"hyb={r.get('hybrid')!s:>4s}  "
                   f"nDCG kw={r.get('keyword_ndcg')} hyb={r.get('hybrid_ndcg')}")
 
 
@@ -158,7 +159,7 @@ def main() -> int:
                     exit_code = max(exit_code, 1)
                 if rep.hybrid_not_worse is False:
                     exit_code = max(exit_code, 1)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 print(f"  ⚠ 入库失败（跑分结果仍有效）：{type(exc).__name__}: {exc}",
                       file=sys.stderr)
                 exit_code = max(exit_code, 1)

@@ -24,9 +24,9 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
-from fd_text_core.db import execute, fetch_all  # noqa: E402
-from fd_text_core.verticals.gov import FACETS  # noqa: E402
-from fd_text_core.verticals.gov.parser import _normalize_issuer  # noqa: E402
+from fd_text_core.db import execute, fetch_all
+from fd_text_core.verticals.gov import FACETS
+from fd_text_core.verticals.gov.parser import _normalize_issuer
 
 DOMAIN = "gov"
 

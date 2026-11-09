@@ -46,7 +46,7 @@ class Settings:
     extra: dict = field(default_factory=dict)
 
     @classmethod
-    def from_env(cls) -> "Settings":
+    def from_env(cls) -> Settings:
         return cls(
             database_url=_require("FDTEXT_DATABASE_URL"),
             s3_endpoint=_require("FDTEXT_S3_ENDPOINT"),

@@ -147,7 +147,7 @@ class KGVerticalConfig:
                 f"an alias): {chained}"
             )
 
-    def validate(self) -> "KGVerticalConfig":
+    def validate(self) -> KGVerticalConfig:
         if not self.name:
             raise ConfigError("config name is required")
         if self.walk_super_edge_threshold < 1:

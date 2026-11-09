@@ -31,8 +31,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from fd_text_core.kg_lane import statute_layer as sl  # noqa: E402
-from fd_text_core.kg_lane.embedding import (  # noqa: E402
+from fd_text_core.kg_lane import statute_layer as sl
+from fd_text_core.kg_lane.embedding import (
     DEFAULT_DIM,
     DEFAULT_MODEL,
     EmbeddingSettings,
@@ -57,15 +57,21 @@ WHERE l.content_status = 'ok'
 """
 
 KNOWN_LIMITS = [
-    "gzk 源 status 一刀切「有效」（10,523 行）且 31% 正文含「废止」字样——"
-    "废止态是 gzk 系统盲区；本建图器只建可确证废止边（标题决定形/附则《》句式），"
-    "不强判（普查坑 2）",
-    "「通过日推导」为近似（施行日≈通过日，人大通过即公布的法律两者同日）；"
-    "来源单独记账 head_pass_derived，可按普查口径剔除复算（坑 3 扩展）",
+    (
+        "gzk 源 status 一刀切「有效」（10,523 行）且 31% 正文含「废止」字样——"
+        "废止态是 gzk 系统盲区；本建图器只建可确证废止边（标题决定形/附则《》句式），"
+        "不强判（普查坑 2）"
+    ),
+    (
+        "「通过日推导」为近似（施行日≈通过日，人大通过即公布的法律两者同日）；"
+        "来源单独记账 head_pass_derived，可按普查口径剔除复算（坑 3 扩展）"
+    ),
     "expiry 字段实为施行日而非失效日（普查坑 1）；脏值 1899-12-31 由年份窗拒绝",
     "决定类文书用「生效」而非「施行」（普查 §6）不在句式覆盖内，进残余不猜",
-    "status∈已废止/失效但无可确证废止源行的，只在节点属性记状态，不建废止边"
-    "（stats.repeal.status_repealed_without_edge 计数）",
+    (
+        "status∈已废止/失效但无可确证废止源行的，只在节点属性记状态，不建废止边"
+        "（stats.repeal.status_repealed_without_edge 计数）"
+    ),
 ]
 
 
@@ -85,12 +91,11 @@ def fetch_records(dsn: str, *, limit: int = 0, order: str = "id",
         params.append(limit)
     sql = FETCH_SQL.format(order_clause=order_clause, limit_clause=limit_clause)
     out: list[dict] = []
-    with psycopg.connect(dsn) as conn:
-        with conn.cursor() as cur:
-            cur.execute(sql, params)
-            cols = [d.name for d in cur.description]
-            for row in cur.fetchall():
-                out.append(dict(zip(cols, row)))
+    with psycopg.connect(dsn) as conn, conn.cursor() as cur:
+        cur.execute(sql, params)
+        cols = [d.name for d in cur.description]
+        for row in cur.fetchall():
+            out.append(dict(zip(cols, row)))
     return out
 
 
@@ -137,7 +142,7 @@ def run_embedding_step(plan, *, enabled: bool, env) -> dict:
             plan, reason="disabled_by_flag", requested=False)
     try:
         settings = embedding_settings_from_env(env)
-    except Exception as exc:  # 配置脏值（如 DIM 非整数）也要留痕
+    except Exception as exc:  # 配置脏值（如 DIM 非整数）也要留痕  # noqa: BLE001
         return sl.degraded_embedding_report(
             plan, reason=f"bad_config:{type(exc).__name__}: {exc}")
     if settings is None:
@@ -146,7 +151,7 @@ def run_embedding_step(plan, *, enabled: bool, env) -> dict:
             reason="missing_config:LEXKG_EMBED_BASE_URL/LEXKG_EMBED_API_KEY")
     try:
         embedder = build_embedder(settings)
-    except Exception as exc:  # 例如未装 openai 客户端
+    except Exception as exc:  # 例如未装 openai 客户端  # noqa: BLE001
         return sl.degraded_embedding_report(
             plan, reason=f"embedder_init_failed:{type(exc).__name__}: {exc}")
     return sl.attach_name_embeddings(

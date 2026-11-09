@@ -21,7 +21,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from fd_text_core import ingest  # noqa: E402
+from fd_text_core import ingest
 
 SRC = "_bench_ingest"
 

@@ -23,11 +23,12 @@ from contextlib import contextmanager
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from load_papers import build_embedder  # noqa: E402
-from fd_text_core import db as dbmod  # noqa: E402
-from fd_text_core import embed_worker  # noqa: E402
-from fd_text_core.ingest import Doc, load_documents  # noqa: E402
-from fd_text_core.provenance import Provenance  # noqa: E402
+from load_papers import build_embedder
+
+from fd_text_core import db as dbmod
+from fd_text_core import embed_worker
+from fd_text_core.ingest import Doc, load_documents
+from fd_text_core.provenance import Provenance
 
 DOMAIN = "news"
 

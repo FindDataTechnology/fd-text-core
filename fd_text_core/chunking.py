@@ -6,9 +6,11 @@
 """
 from __future__ import annotations
 
+import itertools
 import re
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
-from typing import Callable, Iterable, Protocol
+from typing import Protocol
 
 
 @dataclass
@@ -42,7 +44,7 @@ def verify_lossless(text: str, chunks: list[Chunk]) -> tuple[bool, str]:
                     f"期望={text[ctx:i+30]!r} 实际={rebuilt[ctx:i+30]!r}"
                 )
         return False, f"长度不符: 原文 {len(text)} vs 拼接 {len(rebuilt)}"
-    for prev, cur in zip(chunks, chunks[1:]):
+    for prev, cur in itertools.pairwise(chunks):
         if cur.char_start != prev.char_end:
             return False, (
                 f"块 {prev.chunk_no}->{cur.chunk_no} 偏移不连续: "

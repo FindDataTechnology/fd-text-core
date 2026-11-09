@@ -24,12 +24,13 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
-from fd_text_core import embed_worker  # noqa: E402
-from fd_text_core.coldstore import _s3  # noqa: E402
-from fd_text_core.ingest import Doc, iter_structured, load_documents  # noqa: E402
-from fd_text_core.provenance import Provenance  # noqa: E402
+from fd_text_core import embed_worker
+from fd_text_core.coldstore import _s3
+from fd_text_core.ingest import Doc, iter_structured, load_documents
+from fd_text_core.provenance import Provenance
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from load_papers import build_embedder  # noqa: E402
+from load_papers import build_embedder
 
 DOMAIN = "gov"
 

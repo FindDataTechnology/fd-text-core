@@ -10,8 +10,8 @@ import os
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Callable, Sequence
 
 RETRYABLE_STATUS = {408, 425, 429, 500, 502, 503, 504}
 
@@ -97,7 +97,7 @@ class Embedder:
                 status, body = self._post(
                     f"{self.api_base}/embeddings", payload, headers, self.timeout
                 )
-            except Exception as exc:  # 网络/超时归入可重试
+            except Exception as exc:  # 网络/超时归入可重试  # noqa: BLE001
                 status, body = None, {"error": f"{type(exc).__name__}: {exc}"}
                 last = exc
             if status is not None and 200 <= status < 300:
@@ -137,7 +137,7 @@ def provider_from_env() -> dict | None:
     return {"only": names} if names else None
 
 
-def embedder_from_env() -> "Embedder | None":
+def embedder_from_env() -> Embedder | None:
     """按环境变量构造 Embedder（含上游钉住）；缺凭据返回 None 由调用方降级。"""
     base = os.environ.get("FDTEXT_EMBEDDING_API_BASE", "").strip()
     key = os.environ.get("FDTEXT_EMBEDDING_API_KEY", "").strip()

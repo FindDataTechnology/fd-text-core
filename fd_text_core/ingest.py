@@ -9,9 +9,10 @@ import hashlib
 import json
 import logging
 import os
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Iterable, Iterator
+from typing import Any
 
 from .db import cursor, execute, fetch_all, fetch_one
 from .provenance import Provenance
@@ -256,7 +257,7 @@ def _load_batch(domain: str, source: str, chunk: list[Doc], bkey: str, stats: di
                 + " ON CONFLICT (document_id, batch_key) DO NOTHING",
                 tuple(task_params),
             )
-    except Exception as exc:  # noqa: BLE001 —— 补上下文后原样上抛
+    except Exception as exc:
         lo, hi = pending[0][0].source_id, pending[-1][0].source_id
         raise RuntimeError(
             f"批量入库失败（{domain}/{source}，{len(pending)} 篇，source_id {lo}…{hi}）："
@@ -343,7 +344,7 @@ def iter_structured(s3: Any, bucket: str, domain: str, limit: int = 1000) -> Ite
 
     seen = 0
     for row in folded.values():
-        if seen >= limit:
+        if seen >= limit:  # 无法用 enumerate：这是"已产出条数"，不是下标
             return
         yield row
         seen += 1

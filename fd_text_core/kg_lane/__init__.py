@@ -16,4 +16,4 @@ import os
 # graphiti 遥测默认关闭（须早于 import；见试点）
 os.environ.setdefault("GRAPHITI_TELEMETRY_ENABLED", "false")
 
-__all__ = ["llm", "embedding", "cost", "query", "eval", "config"]
+__all__ = ["config", "cost", "embedding", "eval", "llm", "query"]
