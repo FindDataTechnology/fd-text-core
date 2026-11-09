@@ -128,14 +128,20 @@ def _placement(d: Doc) -> tuple[str | None, str | None]:
     return block_key, content_col
 
 
-def _supersede(existing_id: int) -> None:
-    """旧版本整行退役（保留可查），其切块与待办嵌入任务随之失效。"""
-    execute(
+def _supersede_in(cur, existing_id: int) -> None:
+    """旧版本整行退役（保留可查），其切块与待办嵌入任务随之失效。
+
+    **必须在调用方的事务里执行**，不要在这里自己开连接。旧实现用三条独立的
+    ``execute()``，每次各自提交：退役一旦落地，而随后的 ``_placement`` 或插入
+    失败（正文无归处的 ValueError、唯一键冲突、连接断），就留下「旧版已退役 +
+    没有新版」——文档从语料与向量检索里一起消失。退役与写入必须是同一个事务。
+    """
+    cur.execute(
         "UPDATE corpus_documents SET status=%s, updated_at=now() WHERE id=%s",
         (SUPERSEDED, existing_id),
     )
-    execute("DELETE FROM corpus_chunks WHERE document_id=%s", (existing_id,))
-    execute("DELETE FROM embed_tasks WHERE document_id=%s", (existing_id,))
+    cur.execute("DELETE FROM corpus_chunks WHERE document_id=%s", (existing_id,))
+    cur.execute("DELETE FROM embed_tasks WHERE document_id=%s", (existing_id,))
 
 
 def _load_one(d: Doc, bkey: str, stats: dict) -> None:
@@ -156,38 +162,45 @@ def _load_one(d: Doc, bkey: str, stats: dict) -> None:
     if existing and existing["content_hash"] == d.content_hash:
         stats["skipped"] += 1
         return
-    if existing:
-        _supersede(existing["id"])
-        stats["superseded"] += 1
 
+    # 正文归处先算：这一步会抛（正文无归处、冷存写失败），必须发生在任何写库之前，
+    # 否则旧版已退役而新版没进来。
     block_key, content_col = _placement(d)
-    row = fetch_one(
-        """
-        INSERT INTO corpus_documents
-            (domain, source, source_id, title, content_hash, status, origin,
-             cold_block_key, content, metadata, provenance)
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb)
-        RETURNING id
-        """,
-        (
-            d.domain, d.source, d.source_id, d.title, d.content_hash, CURRENT,
-            d.origin, block_key, content_col, json.dumps(d.metadata),
-            json.dumps(Provenance.now(d.source, d.source_id).to_dict()),
-        ),
-    )
-    if row is None:
-        # RETURNING 不应为空；发生了就诚实失败而非静默续跑
-        raise RuntimeError(f"入库未拿到 id: {d.domain}/{d.source}/{d.source_id}")
-    stats["inserted"] += 1
 
-    execute(
-        """
-        INSERT INTO embed_tasks (document_id, domain, batch_key, state)
-        VALUES (%s,%s,%s,'pending')
-        ON CONFLICT (document_id, batch_key) DO NOTHING
-        """,
-        (row["id"], d.domain, bkey),
-    )
+    # 退役 + 插入 + 入队 = 一个事务。任何一步失败，旧版保持 current、切块不丢。
+    with cursor(commit=True) as cur:
+        if existing:
+            _supersede_in(cur, existing["id"])
+        cur.execute(
+            """
+            INSERT INTO corpus_documents
+                (domain, source, source_id, title, content_hash, status, origin,
+                 cold_block_key, content, metadata, provenance)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb)
+            RETURNING id
+            """,
+            (
+                d.domain, d.source, d.source_id, d.title, d.content_hash, CURRENT,
+                d.origin, block_key, content_col, json.dumps(d.metadata),
+                json.dumps(Provenance.now(d.source, d.source_id).to_dict()),
+            ),
+        )
+        got = cur.fetchone()
+        if got is None:
+            # RETURNING 不应为空；发生了就诚实失败而非静默续跑（事务整体回滚）
+            raise RuntimeError(f"入库未拿到 id: {d.domain}/{d.source}/{d.source_id}")
+        cur.execute(
+            """
+            INSERT INTO embed_tasks (document_id, domain, batch_key, state)
+            VALUES (%s,%s,%s,'pending')
+            ON CONFLICT (document_id, batch_key) DO NOTHING
+            """,
+            (got[0], d.domain, bkey),
+        )
+
+    if existing:
+        stats["superseded"] += 1
+    stats["inserted"] += 1
     stats["queued"] += 1
 
 
@@ -210,24 +223,22 @@ def _load_batch(domain: str, source: str, chunk: list[Doc], bkey: str, stats: di
         )
     }
 
-    pending: list[tuple[Doc, str | None, str | None]] = []
+    pending: list[tuple[Doc, str | None, str | None, int | None]] = []
     for d in chunk:
         ex = existing.get(d.source_id)
         if ex and ex["content_hash"] == d.content_hash:
             stats["skipped"] += 1
             continue
-        if ex:
-            # 版本更替仍走逐条：要清切块与待办嵌入任务，属低频路径
-            _supersede(ex["id"])
-            stats["superseded"] += 1
+        # 正文归处先算（可能抛），退役只登记不执行——退役必须与插入同事务，
+        # 否则中途失败会留下「旧版已退役 + 没有新版」，文档直接消失。
         block_key, content_col = _placement(d)
-        pending.append((d, block_key, content_col))
+        pending.append((d, block_key, content_col, ex["id"] if ex else None))
     if not pending:
         return
 
     values_sql = ",".join(["(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb)"] * len(pending))
     params: list[Any] = []
-    for d, block_key, content_col in pending:
+    for d, block_key, content_col, _existing_id in pending:
         params.extend([
             domain, source, d.source_id, d.title, d.content_hash, CURRENT, d.origin,
             block_key, content_col, json.dumps(d.metadata),
@@ -241,8 +252,11 @@ def _load_batch(domain: str, source: str, chunk: list[Doc], bkey: str, stats: di
         + " RETURNING id, source_id"
     )
     try:
-        # 一个批次一个事务：正文与嵌入任务要么一起成立，要么一起不成立
+        # 一个批次一个事务：**退役 + 正文 + 嵌入任务**要么一起成立，要么一起不成立
         with cursor(commit=True) as cur:
+            for _d, _bk, _cc, existing_id in pending:
+                if existing_id is not None:
+                    _supersede_in(cur, existing_id)
             cur.execute(insert_sql, tuple(params))
             got = cur.fetchall()
             if len(got) != len(pending):
@@ -264,6 +278,7 @@ def _load_batch(domain: str, source: str, chunk: list[Doc], bkey: str, stats: di
             f"{type(exc).__name__}: {exc}"
         ) from exc
 
+    stats["superseded"] += sum(1 for *_x, eid in pending if eid is not None)
     stats["inserted"] += len(got)
     stats["queued"] += len(got)
 
