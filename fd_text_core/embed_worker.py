@@ -21,6 +21,10 @@ from .tokenize import cjk_tokens_text
 from .verticals.registry import get_strategy
 
 ANCHOR_TAG = "worker-startup"
+# 数字占比超过此阈值的切块不送嵌入（表格碎片，无语义内容）。
+# 0 或负数 = 关闭过滤。实测 news 语料 11.3% 的块 > 0.3。
+MAX_DIGIT_RATIO = float(os.environ.get("FDTEXT_EMBED_MAX_DIGIT_RATIO", "0.3") or 0.3)
+
 SIMILARITY_FLOOR = 0.999
 
 
@@ -308,10 +312,19 @@ def run_once(embedder: Embedder, model: str, limit: int = 50) -> WorkerResult:
                 continue
             text = _document_text(doc)
             res.chunks += ensure_chunks(doc, text)
-            # 只嵌尚未嵌入的块，断点续嵌天然幂等
+            # 只嵌尚未嵌入的块，断点续嵌天然幂等。
+            # 数字密集块（表格碎片）不嵌：它们没有语义内容，向量只会把近邻检索往
+            # "报表行"上带偏。实测 news 语料 11.3% 的块数字占比 > 0.3，典型长这样：
+            # `67 4,800.82 6 苏商创投 金张科技5.24%股权 - 7,335.54`。
+            # 阈值 FDTEXT_EMBED_MAX_DIGIT_RATIO 可调，<=0 关闭过滤（回退到全嵌）。
             targets = fetch_all(
-                "SELECT id, chunk_text FROM corpus_chunks WHERE document_id=%s AND embedding IS NULL ORDER BY chunk_no",
-                (doc["id"],),
+                "SELECT id, chunk_text FROM corpus_chunks"
+                " WHERE document_id=%s AND embedding IS NULL"
+                "   AND (%s::float <= 0 OR"
+                "        (length(chunk_text) - length(regexp_replace(chunk_text, '[0-9]', '', 'g')))::float"
+                "        / greatest(length(chunk_text), 1) < %s::float)"
+                " ORDER BY chunk_no",
+                (doc["id"], MAX_DIGIT_RATIO, MAX_DIGIT_RATIO),
             )
             prepared.append((t, doc, targets))
         except Exception as exc:  # noqa: BLE001
