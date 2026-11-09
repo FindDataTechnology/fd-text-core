@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import math
 import os
+import time
 from dataclasses import dataclass
 
 from . import coldstore
@@ -280,8 +281,18 @@ def claim_batch(limit: int = 50) -> list[dict]:
     return rows
 
 
-def run_once(embedder: Embedder, model: str, limit: int = 50) -> WorkerResult:
+def run_once(
+    embedder: Embedder,
+    model: str,
+    limit: int = 50,
+    deadline: float | None = None,
+    max_inputs: int | None = None,
+) -> WorkerResult:
     """跑一批。开工前必过自检门。
+
+    `deadline`（time.monotonic 值）与 `max_inputs` 是**单轮预算闸**：到点、或再加这一篇
+    就会把单批输入撑爆时停下；未处理的任务留在 claimed 态，由 reclaim_stale 回收成
+    pending。实测 2026-11-09：一篇超长公告贡献了 809 个块，把 540s 的预算拖成 26.7 分钟。
 
     嵌入调用**按整批合并**（2026-11-08 批量化）：库在 tailnet，一次 HTTP 往返换来的
     向量数与 input 条数无关——实测 1 条 3.9s、8 条 2.2s，逐篇调用等于把这段延迟
@@ -303,7 +314,12 @@ def run_once(embedder: Embedder, model: str, limit: int = 50) -> WorkerResult:
     prepared: list[tuple[dict, dict, list[dict]]] = []
     failed = 0
     retryable = 0
+    pending_inputs = 0
+    deferred = 0
     for t in tasks:
+        if deadline is not None and prepared and time.monotonic() >= deadline:
+            deferred += 1
+            continue
         try:
             doc = fetch_one("SELECT * FROM corpus_documents WHERE id=%s", (t["document_id"],))
             if doc is None:
@@ -326,6 +342,12 @@ def run_once(embedder: Embedder, model: str, limit: int = 50) -> WorkerResult:
                 " ORDER BY chunk_no",
                 (doc["id"], MAX_DIGIT_RATIO, MAX_DIGIT_RATIO),
             )
+            if max_inputs and prepared and pending_inputs + len(targets) > max_inputs:
+                # 这一篇会把单批撑爆（实测有一篇贡献 809 块）：留给下一轮。
+                # 任务仍在 claimed，由 reclaim_stale 回收；切块已幂等写入，不会重做。
+                deferred += 1
+                continue
+            pending_inputs += len(targets)
             prepared.append((t, doc, targets))
         except Exception as exc:  # noqa: BLE001
             message = str(exc)[:500]
@@ -336,6 +358,8 @@ def run_once(embedder: Embedder, model: str, limit: int = 50) -> WorkerResult:
             failed += 1
             if is_retryable(message):
                 retryable += 1
+    if deferred:
+        print(f"[embed] 本轮预算到点/单批超限，{deferred} 篇留给下一轮（任务留在 claimed，稍后自动回收）")
 
     # ── 阶段二：整批一次嵌入（跨文档）──
     texts = [row["chunk_text"] for _, _, targets in prepared for row in targets]

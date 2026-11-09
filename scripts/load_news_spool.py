@@ -158,7 +158,7 @@ def _strip_html_to_text(source: str, content: str) -> str:
         return content
     try:
         doc = parse_gov_doc(content)
-    except Exception:
+    except Exception:  # noqa: BLE001 —— 解析器对畸形 HTML 的失败形态不可枚举；失败即跳过
         return ""
     body = (getattr(doc, "body", "") or "").strip()
     if not body:
@@ -197,6 +197,12 @@ def main() -> int:
         type=float,
         default=float(os.environ.get("SPOOL_MAX_BACKLOG_HOURS", "6")),
         help="嵌入积压最老条目超过此小时数即判本轮不健康（非零退出）",
+    )
+    ap.add_argument(
+        "--embed-max-inputs",
+        type=int,
+        default=int(os.environ.get("SPOOL_EMBED_MAX_INPUTS", "400")),
+        help="单批最多送多少块；再加就会把一次嵌入调用撑爆（实测有单篇 809 块）",
     )
     ap.add_argument("--fake-embed", action="store_true")
     args = ap.parse_args()
@@ -237,7 +243,10 @@ def main() -> int:
     deadline = time.monotonic() + args.embed_seconds
     while True:
         try:
-            res = embed_worker.run_once(embedder, model, limit=args.embed_batch)
+            res = embed_worker.run_once(
+                embedder, model, limit=args.embed_batch,
+                deadline=deadline, max_inputs=args.embed_max_inputs,
+            )
         except embed_worker.SelfCheckUnavailable as exc:
             # 自检探针答不上（上游 5xx/超时）≠ 模型漂移：这一轮没写任何东西，
             # 直接收工是安全的；真正的「绿着但向量缺失」由下面的积压超龄门盯住。

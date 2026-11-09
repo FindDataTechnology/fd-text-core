@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-from .db import cursor, execute, fetch_all, fetch_one
+from .db import cursor, fetch_all, fetch_one
 from .provenance import Provenance
 
 logger = logging.getLogger(__name__)
