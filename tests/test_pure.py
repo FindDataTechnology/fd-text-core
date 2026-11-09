@@ -516,3 +516,23 @@ def test_spool_rows_strip_html_at_ingest_boundary():
 
     # 解析不出正文时返回空串 → 调用方按"缺正文"跳过，不落脏数据
     assert _strip_html_to_text("cn-gov", "<div></div>") == ""
+
+
+def test_skip_source_types_parsing_and_default():
+    """停向量化的开关语义：空=全嵌；给了名单才跳过；名单按逗号切并去空。"""
+    import importlib
+    import os
+
+    from fd_text_core import embed_worker
+
+    # 默认（本仓测试环境没设该变量）= 空集合 => 不跳过任何来源
+    if "FDTEXT_EMBED_SKIP_SOURCE_TYPES" not in os.environ:
+        assert embed_worker.SKIP_SOURCE_TYPES == frozenset()
+
+    os.environ["FDTEXT_EMBED_SKIP_SOURCE_TYPES"] = " announcement , ,ministry "
+    try:
+        m = importlib.reload(embed_worker)
+        assert m.SKIP_SOURCE_TYPES == frozenset({"announcement", "ministry"})
+    finally:
+        os.environ.pop("FDTEXT_EMBED_SKIP_SOURCE_TYPES", None)
+        importlib.reload(embed_worker)

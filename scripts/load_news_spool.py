@@ -239,7 +239,7 @@ def main() -> int:
     embedder, model = build_embedder(args)
     if args.fake_embed:
         embed_worker.run_self_check = lambda *a, **k: 1.0  # type: ignore[assignment]
-    done = failed = retryable = 0
+    done = failed = retryable = skipped_policy = 0
     deadline = time.monotonic() + args.embed_seconds
     while True:
         try:
@@ -259,13 +259,14 @@ def main() -> int:
         done += res.embedded
         failed += res.failed
         retryable += res.retryable
+        skipped_policy += res.skipped
         print(f"[embed] claimed={res.claimed} embedded={res.embedded} chunks={res.chunks} failed={res.failed}")
         if time.monotonic() >= deadline:
             print(f"[embed] 达到本轮时间预算 {args.embed_seconds}s，余下批次交给下一轮")
             break
 
     print(f"[done] news 域本轮：文档 {len(docs)}、嵌入块 {done}、失败 {failed}"
-          f"（其中可重试 {retryable}）")
+          f"（其中可重试 {retryable}；按策略不向量化 {skipped_policy} 篇）")
     # 只有**永久性**失败才判这一轮不成功。限流/超时/连接类失败已经被
     # retry_rate_limited() 在冷却后放回 pending，下一轮照常接着嵌；把它们算成
     # Job 失败只会让看板常红、Error pod 堆成山，而队列其实在正常排空。

@@ -26,6 +26,15 @@ ANCHOR_TAG = "worker-startup"
 # 0 或负数 = 关闭过滤。实测 news 语料 11.3% 的块 > 0.3。
 MAX_DIGIT_RATIO = float(os.environ.get("FDTEXT_EMBED_MAX_DIGIT_RATIO", "0.3") or 0.3)
 
+
+#: 不做向量化的 source_type（逗号分隔；空 = 全都嵌）。
+#: 用户裁决 2026-11-09：**财报/公告不向量化**——额度不够，且这类模板化长文语义检索
+#: 收益极低。但**仍要切块**：关键词检索走 corpus_chunks.tsv，不切块等于把全文检索
+#: 一起关掉（实测 querylib.keyword_search 直接查 corpus_chunks）。
+SKIP_SOURCE_TYPES = frozenset(
+    x.strip() for x in os.environ.get("FDTEXT_EMBED_SKIP_SOURCE_TYPES", "").split(",") if x.strip()
+)
+
 SIMILARITY_FLOOR = 0.999
 
 
@@ -98,6 +107,7 @@ class WorkerResult:
     failed: int = 0
     retryable: int = 0  # 失败中属瞬时的（限流/超时/连接）——已被 cooldown 后放回 pending
     reclaimed: int = 0  # 本次开工回收的陈旧 claim 数
+    skipped: int = 0    # 按策略不做向量化的（仍切块，见 SKIP_SOURCE_TYPES）
 
 
 def ensure_chunks(doc_row: dict, text: str) -> int:
@@ -327,7 +337,18 @@ def run_once(
                 failed += 1
                 continue
             text = _document_text(doc)
+            # 仍然切块：关键词检索走 corpus_chunks.tsv，跳过切块会把全文检索一起关掉。
             res.chunks += ensure_chunks(doc, text)
+            source_type = (doc.get("metadata") or {}).get("source_type")
+            if SKIP_SOURCE_TYPES and source_type in SKIP_SOURCE_TYPES:
+                # 按策略不向量化：任务落 'skipped'（不是 failed，也不是 finished），
+                # 语义上"这条按当前策略不需要向量"，与失败可区分。
+                execute(
+                    "UPDATE embed_tasks SET state='skipped', finished_at=now() WHERE id=%s",
+                    (t["id"],),
+                )
+                res.skipped += 1
+                continue
             # 只嵌尚未嵌入的块，断点续嵌天然幂等。
             # 数字密集块（表格碎片）不嵌：它们没有语义内容，向量只会把近邻检索往
             # "报表行"上带偏。实测 news 语料 11.3% 的块数字占比 > 0.3，典型长这样：
