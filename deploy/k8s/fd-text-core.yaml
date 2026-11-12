@@ -20,7 +20,9 @@ spec:
           # 快照 sha（通用构建池 testaction005/build-pool 线）——
           # 对应真源 dfe0091（263155c 全部内容 + 嵌入客户端瞬时故障重试）。
           # 2026-10-22 出片。上一版 sha-1806fe5 对应真源 263155c。
-          image: ccr.ccs.tencentyun.com/finddata/fd-text-core:sha-a1ad54c
+          # 2026-11-12 sha-abbe929：线自有共享 bearer 门（change converge-line-identity-and-keys 8.6）。
+          # 快照源真 aa715e77（含 fd_text_core/auth.py + 服务入口的 serve_http 分支）；回滚=sha-a1ad54c
+          image: ccr.ccs.tencentyun.com/finddata/fd-text-core:sha-abbe929
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
@@ -29,6 +31,16 @@ spec:
             - secretRef:
                 name: fd-text-core-env
           env:
+            # 8.6 翻转第二步：与注册表 backend auth 的 auth_credential 逐字节相同
+            # （注册表在出口把 Authorization 换成这把令牌；本线门按 Bearer 精确比较）。
+            # 未设=门不存在（与接入前逐字节一致）；设了才生效。值只在 Secret 里。
+            # 唯一的内部消费者 fd-info 已先在 FD_TEXT_CORE_TOKEN 配了同一个值
+            # （textcore_search.py:127 本来就发 `Authorization: Bearer <token>`）。
+            - name: MCP_BEARER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: fd-text-core-line-token
+                  key: MCP_BEARER_TOKEN
             - name: PORT
               value: "8000"
           resources:
