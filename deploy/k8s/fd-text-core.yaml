@@ -24,8 +24,11 @@ spec:
           # 快照源真 aa715e77（含 fd_text_core/auth.py + 服务入口的 serve_http 分支）。
           # 2026-11-13 sha-f3a2fc0：三处 facet 修复 + facet 覆盖门。快照源真 890e383d5
           # （13f61e2 facet 覆盖门 / 57c3c68 origin column 模式 / fcf2187 news has_body /
-          #  fbef517 papers cat→categories）；回滚=sha-7aa80bf
-          image: ccr.ccs.tencentyun.com/finddata/fd-text-core:sha-f3a2fc0
+          #  fbef517 papers cat→categories）；回滚=sha-abbe929
+          # 2026-11-13 sha-7942eec：+ 关键词道 facet 参数错位修复（2376375，旧顺序把
+          # query 灌进元数据键位、键灌进数组位 → malformed array literal，任何带 facet 的
+          # 关键词查询必红）；回滚=sha-f3a2fc0
+          image: ccr.ccs.tencentyun.com/finddata/fd-text-core:sha-7942eec
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
