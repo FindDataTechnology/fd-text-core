@@ -12,9 +12,12 @@ from fastmcp import FastMCP
 from .annotations import annotations_for
 from .db import UpstreamUnavailable
 from .querylib import FacetError, hybrid_search, read_chunks
+from . import wellknown
 from .verticals.registry import list_verticals
 
 mcp = FastMCP("fd-text-core", instructions="通用文本引擎：按垂域命名空间提供检索与读取工具。")
+
+wellknown.register(mcp)  # /.well-known/line-manifest.json（公开、免鉴权、零网络）
 
 
 def _embedder_or_none():

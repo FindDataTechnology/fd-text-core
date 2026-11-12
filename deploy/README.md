@@ -68,9 +68,14 @@ kubectl --context cheap -n argocd apply -f deploy/argocd/application.yaml
 
 ## 运行所需 Secret（集群内，不进 git）
 
+> 2026-11-12：`FDTEXT_DATABASE_URL` 已指向集群内专用实例
+> `fd-text-pg.fd-prod.svc.cluster.local:5432`（清单在
+> `fd-infra-deploy/all-services/prod/fd-text-pg.yaml`），角色是库属主 `fd_text_app`。
+> 下面那行 `admin@100.64.0.10` 是迁移前的历史写法，保留只为说明键名集合。
+
 ```bash
-kubectl --context cheap -n fd-prod create secret generic fd-text-core-env \
-  --from-literal=FDTEXT_DATABASE_URL='postgresql://admin:<pwd>@100.64.0.10:5432/fd_text' \
+kubectl --context cheap-ts -n fd-prod create secret generic fd-text-core-env \
+  --from-literal=FDTEXT_DATABASE_URL='postgresql://fd_text_app:<pwd>@fd-text-pg.fd-prod.svc.cluster.local:5432/fd_text' \
   --from-literal=FDTEXT_S3_ENDPOINT='http://100.64.0.11:9000' \
   --from-literal=FDTEXT_S3_BUCKET='fd-text' \
   --from-literal=FDTEXT_S3_ACCESS_KEY='<key>' \
