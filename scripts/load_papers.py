@@ -121,49 +121,43 @@ def main() -> int:
         f" fulltext={'on' if args.with_fulltext else 'off'}"
         f" grobid={'configured' if grobid_endpoint else 'unconfigured'}"
     )
-    docs, total = [], 0
-    status_counts: dict[str, int] = {}
-    with_fulltext = 0
+    papers, collected = [], 0
     for batch, _token in H.harvest_metadata(
         set_spec=args.set,
         max_records=args.max,
         from_date=args.from_date,
         until_date=until,
     ):
-        for p in batch:
-            # 版权红线：全文只进内部索引（冷存/文档库），任何对外端点不得返回全文文件。
-            # 本条不禁止入库——LICENSE-NOTE 明写"可下载、可索引、可内部处理"。
-            full_text, status = "", F.STATUS_DISABLED
-            if args.with_fulltext:
-                full_text, status = F.acquire_fulltext(
-                    p, throttler=throttler, grobid_endpoint=grobid_endpoint
-                )
-            status_counts[status] = status_counts.get(status, 0) + 1
-            body = F.compose_content(p, full_text)
-            if not body:
-                continue
-            if full_text:
-                with_fulltext += 1
-            docs.append(
-                Doc(
-                    domain="papers",
-                    source="arxiv",
-                    source_id=p.arxiv_id,
-                    title=p.title,
-                    content=body,
-                    metadata={
-                        "authors": p.authors,
-                        "categories": p.categories,
-                        "license_url": p.license_url,
-                        "provenance": Provenance.now("arxiv", p.arxiv_id).to_dict(),
-                        **F.fulltext_metadata(full_text, status),
-                        "source_url": p.source_url,
-                    },
-                )
-            )
-            total += 1
-        if total >= args.max:
+        papers.extend(batch)
+        collected = len(papers)
+        if collected >= args.max:
             break
+
+    # 版权红线：全文只进内部索引（冷存/文档库），任何对外端点不得返回全文文件。
+    # 本条不禁止入库——LICENSE-NOTE 明写"可下载、可索引、可内部处理"。
+    items, summary = F.build_documents(
+        papers,
+        with_fulltext=args.with_fulltext,
+        grobid_endpoint=grobid_endpoint,
+        throttler=throttler,
+    )
+    docs = [
+        Doc(
+            domain="papers",
+            source="arxiv",
+            source_id=it["arxiv_id"],
+            title=it["title"],
+            content=it["content"],
+            metadata={
+                **it["metadata"],
+                "provenance": Provenance.now("arxiv", it["arxiv_id"]).to_dict(),
+            },
+        )
+        for it in items
+    ]
+    total = summary["total"]
+    with_fulltext = summary["with_fulltext"]
+    status_counts = summary["status_counts"]
     print(f"[harvest] 组装 {total} 篇；全文 {with_fulltext} 篇；状态 {status_counts}")
 
     # 开关静默失效是这套管线最贵的假绿：跑完一小时后仍只有摘要，日志却一片正常。
