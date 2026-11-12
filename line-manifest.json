@@ -1,0 +1,34 @@
+{
+  "schema": "line-manifest/v1",
+  "line": "text-core",
+  "public_base_url": "https://mcp.finddatatech.cloud/fd-text-core",
+  "identity": {
+    "issuer": "https://auth.finddatatech.cloud/oidc",
+    "jwks_uri": "https://auth.finddatatech.cloud/oidc/jwks",
+    "jit_policy": "off",
+    "note": "本仓零入站凭据校验：`FastMCP(\"fd-text-core\", ...)` 未传 auth、未挂中间件（server.py:17）。仓内 `api_key` 全是**出站**嵌入调用凭据（config.py:32-58、embedding.py:48-86）。无断言兑换端点，jit_policy=off。"
+  },
+  "auth_tracks": [
+    {
+      "kind": "customer-key",
+      "accepts": "ciyuan-sk",
+      "fallback": false,
+      "enforced": false,
+      "migration_task": "converge-line-identity-and-keys#8.3",
+      "note": "未接：本仓不解析入站凭据。"
+    }
+  ],
+  "scopes": [
+    "line:read"
+  ],
+  "billing": {
+    "plane": "ciyuan",
+    "note": "本仓零计费代码（grep `sub2api` 无命中）：按调用扣费发生在网关/registry 的词元平面，不在本线代码里。只读检索服务；嵌入开销由本线自己的出站凭据承担，不在本仓记账。"
+  },
+  "surfaces": {
+    "mcp": true,
+    "account": false,
+    "admin": false
+  },
+  "note": "23 个只读工具：公版剧本库/论文元数据/部委公文/资讯条目四域混合检索（关键词 ⊕ 向量）+ KG 车道（FalkorDB 时序图谱）。垂域以配置接入，故工具面随配置增减。"
+}
