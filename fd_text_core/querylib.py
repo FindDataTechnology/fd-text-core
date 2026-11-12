@@ -132,7 +132,12 @@ def keyword_search(domain: str, query: str, limit: int, facets: dict | None = No
                      kw_score DESC, c.document_id, c.chunk_no
             LIMIT %s
         """
-        rows = fetch_all(sql, [tq, domain, tq, query] + params + [limit])
+        # 参数顺序必须与**占位符在 SQL 文本里的先后**一致。{where} 插在
+        # `c.tsv @@ …` 之后、`ORDER BY … ILIKE` 之前，所以 facets 的参数要排在
+        # query 之前——曾经写成 `[tq, domain, tq, query] + params`，于是带 facet 的
+        # 关键词查询把 query 灌进元数据键位、把元数据键灌进数组位，
+        # 直接报 `malformed array literal`（2026-11-13 生产实测）。
+        rows = fetch_all(sql, [tq, domain, tq] + params + [query, limit])
     else:
         # ILIKE（大小写不敏感）与 plainto_tsquery 的大小写折叠语义对齐。
         sql = f"""
@@ -147,7 +152,8 @@ def keyword_search(domain: str, query: str, limit: int, facets: dict | None = No
             LIMIT %s
         """
         cfg = _tsv_config(domain)
-        rows = fetch_all(sql, [cfg, query, domain, cfg, query, query] + params + [limit])
+        # 同上：facets 的参数排在 ILIKE 的 query 之前（占位符在 SQL 里就在它前面）。
+        rows = fetch_all(sql, [cfg, query, domain, cfg, query] + params + [query, limit])
     for r in rows:
         r["by"] = "keyword"
     return rows
