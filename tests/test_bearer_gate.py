@@ -14,10 +14,10 @@ import types
 
 import pytest
 
-from fd_text_core.auth import ENV_TOKEN, BearerAuthMiddleware, configured_token
+from fd_text_core.auth import ENV_TOKEN, EXEMPT_PATHS, BearerAuthMiddleware, configured_token
 
 
-def _run(mw, headers, *, scope_type="http"):
+def _run(mw, headers, *, path="/mcp", scope_type="http"):
     """喂一个 scope 进去，返回 (status, body, reached_downstream)。"""
     reached = []
     sent = []
@@ -33,7 +33,11 @@ def _run(mw, headers, *, scope_type="http"):
     async def send(message):
         sent.append(message)
 
-    scope = {"type": scope_type, "headers": [(k.encode(), v.encode()) for k, v in headers.items()]}
+    scope = {
+        "type": scope_type,
+        "path": path,
+        "headers": [(k.encode(), v.encode()) for k, v in headers.items()],
+    }
     asyncio.run(mw(downstream)(scope, receive, send))
 
     status = next((m["status"] for m in sent if m["type"] == "http.response.start"), None)
@@ -148,3 +152,18 @@ def test_serve_http_with_token_wraps_middleware(monkeypatch):
     assert calls["uvicorn"]["app"] == "ASGI-APP"
     assert calls["uvicorn"]["port"] == 9411
     assert "run" not in calls
+
+def test_health_path_exempt(monkeypatch):
+    """探针永远不带钥匙：豁免路径必须放行（本族有把 /healthz 与 /mcp 挂同一 app 的线）。"""
+    monkeypatch.setenv(ENV_TOKEN, "s3cret")
+    for path in EXEMPT_PATHS:
+        status, _, reached = _run(BearerAuthMiddleware, {}, path=path)
+        assert (status, reached) == (200, True), path
+
+
+def test_non_health_paths_not_exempt(monkeypatch):
+    """豁免只认精确路径：带前缀/后缀的不是健康面。"""
+    monkeypatch.setenv(ENV_TOKEN, "s3cret")
+    for path in ("/healthz/x", "/api/v1/healthz", "/mcp", "/"):
+        status, _, reached = _run(BearerAuthMiddleware, {}, path=path)
+        assert (status, reached) == (401, False), path

@@ -18,6 +18,11 @@ import os
 
 ENV_TOKEN = "MCP_BEARER_TOKEN"
 
+# 健康面豁免：探针永远不带钥匙，且只回状态，不是数据面。本线今天把 /health
+# 挂在另一个监听上，所以这条豁免在这里不改行为；写进来是为了**同族中立**——
+# 抄这份文件的人如果沿用同一 app 挂 /healthz，不会把探针打死。
+EXEMPT_PATHS = ("/health", "/healthz")
+
 
 def configured_token() -> str:
     """每请求重读：改旗/轮换不需要重启进程。"""
@@ -27,7 +32,8 @@ def configured_token() -> str:
 class BearerAuthMiddleware:
     """ASGI 中间件：配了 token 就要求匹配的 bearer，未配则不设门。
 
-    只拦 ``http`` scope——lifespan 必须放过去，否则应用起不来。
+    只拦 ``http`` scope——lifespan 必须放过去，否则应用起不来；健康面按
+    ``EXEMPT_PATHS`` 豁免。
     """
 
     def __init__(self, asgi_app):
@@ -36,6 +42,8 @@ class BearerAuthMiddleware:
     def __call__(self, scope, receive, send):
         token = configured_token()
         if scope["type"] != "http" or not token:
+            return self.asgi_app(scope, receive, send)
+        if (scope.get("path") or "") in EXEMPT_PATHS:
             return self.asgi_app(scope, receive, send)
 
         headers = dict(scope.get("headers") or [])
