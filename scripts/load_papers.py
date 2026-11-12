@@ -7,7 +7,11 @@
     export FDTEXT_DATABASE_URL=...  # 必填
     export FDTEXT_S3_ENDPOINT=... FDTEXT_S3_ACCESS_KEY=... FDTEXT_S3_SECRET_KEY=...
     export FDTEXT_EMBEDDING_API_KEY=...   # 无 key 时传 --fake-embed 走确定性假向量
-    python3 scripts/load_papers.py --set cs --max 40
+    export FDTEXT_GROBID_URL=...          # 可选；PDF-only 论文的解析端点
+    python3 scripts/load_papers.py --set cs --from 2025-10-01 --max 40
+
+``--with-fulltext`` 逐篇取 e-print（1 请求/3 秒）解析入库；不加时只入标题+摘要。
+开了全文却零篇成功时非零退出——开关静默失效是这套管线最贵的假绿。
 
 --fake-embed 只用于验证管线行为（1024 维确定性向量），不产生真实语义质量；
 没有 key 又不加该开关时，脚本如实报错退出，不静默降级。
@@ -16,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import os
 import sys
 from pathlib import Path
 
@@ -26,6 +31,7 @@ from fd_text_core import embed_worker
 from fd_text_core.embedding import Embedder, provider_from_env
 from fd_text_core.ingest import Doc, load_documents
 from fd_text_core.provenance import Provenance
+from fd_text_core.verticals.papers import fulltext as F
 from fd_text_core.verticals.papers import harvest as H
 
 
@@ -95,11 +101,29 @@ def main() -> int:
     ap.add_argument("--max", type=int, default=40, help="采集条数上限")
     ap.add_argument("--embed-batch", type=int, default=20, help="每批认领任务数")
     ap.add_argument("--fake-embed", action="store_true", help="用确定性假向量（管线验证用）")
+    ap.add_argument(
+        "--with-fulltext",
+        action="store_true",
+        help="逐篇取 e-print 并解析入库（限速 1 请求/3 秒）。不加时只入标题+摘要",
+    )
+    ap.add_argument(
+        "--grobid-url",
+        default=None,
+        help="GROBID 端点（默认读 FDTEXT_GROBID_URL）；未配置时 PDF-only 论文显式降级",
+    )
     args = ap.parse_args()
 
+    grobid_endpoint = (args.grobid_url or os.environ.get("FDTEXT_GROBID_URL", "")).strip()
+    throttler = H.Throttler()
     until = args.until_date or args.from_date
-    print(f"[harvest] arXiv OAI set={args.set} from={args.from_date} until={until} max={args.max}")
+    print(
+        f"[harvest] arXiv OAI set={args.set} from={args.from_date} until={until} max={args.max}"
+        f" fulltext={'on' if args.with_fulltext else 'off'}"
+        f" grobid={'configured' if grobid_endpoint else 'unconfigured'}"
+    )
     docs, total = [], 0
+    status_counts: dict[str, int] = {}
+    with_fulltext = 0
     for batch, _token in H.harvest_metadata(
         set_spec=args.set,
         max_records=args.max,
@@ -107,12 +131,19 @@ def main() -> int:
         until_date=until,
     ):
         for p in batch:
-            # 版权红线：v1 只索引摘要与元数据，不落地全文，也不对外回吐全文
-            body = "\n".join(
-                part for part in (p.title, "", p.abstract) if part
-            ).strip()
+            # 版权红线：全文只进内部索引（冷存/文档库），任何对外端点不得返回全文文件。
+            # 本条不禁止入库——LICENSE-NOTE 明写"可下载、可索引、可内部处理"。
+            full_text, status = "", F.STATUS_DISABLED
+            if args.with_fulltext:
+                full_text, status = F.acquire_fulltext(
+                    p, throttler=throttler, grobid_endpoint=grobid_endpoint
+                )
+            status_counts[status] = status_counts.get(status, 0) + 1
+            body = F.compose_content(p, full_text)
             if not body:
                 continue
+            if full_text:
+                with_fulltext += 1
             docs.append(
                 Doc(
                     domain="papers",
@@ -125,7 +156,7 @@ def main() -> int:
                         "categories": p.categories,
                         "license_url": p.license_url,
                         "provenance": Provenance.now("arxiv", p.arxiv_id).to_dict(),
-                        "has_fulltext": "false",
+                        **F.fulltext_metadata(full_text, status),
                         "source_url": p.source_url,
                     },
                 )
@@ -133,7 +164,18 @@ def main() -> int:
             total += 1
         if total >= args.max:
             break
-    print(f"[harvest] 组装 {total} 篇")
+    print(f"[harvest] 组装 {total} 篇；全文 {with_fulltext} 篇；状态 {status_counts}")
+
+    # 开关静默失效是这套管线最贵的假绿：跑完一小时后仍只有摘要，日志却一片正常。
+    # 开了全文却零成功，直接非零退出，让"配置错了"立刻可见。
+    if args.with_fulltext and with_fulltext == 0 and total > 0:
+        print(
+            "[harvest] 致命：--with-fulltext 开了但零篇拿到全文（"
+            f"{status_counts}）。检查网络/限速/代理或 GROBID 配置，不要当成功继续。",
+            file=sys.stderr,
+        )
+        return 2
+
 
     stats = load_documents(docs, batch_key="load_papers")
     print(f"[ingest] {stats}")

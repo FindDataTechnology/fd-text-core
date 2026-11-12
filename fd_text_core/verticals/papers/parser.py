@@ -9,7 +9,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 
 # 常见 LaTeX 噪声：注释、简单宏、内联数学标记（保留文本内容）
@@ -159,6 +159,65 @@ def parse_fulltext(blob: bytes, *, looks_like_tex) -> ParsedPaper:
         out = ParsedPaper(source_kind="needs-grobid")
         return out
     return ParsedPaper(source_kind="unknown")
+
+
+#: GROBID 满文解析端点（Apache-2.0 sidecar）。它不在本仓：本仓只出客户端，
+#: 避免把 Java 运行时与模型文件塞进引擎镜像。
+GROBID_PROCESS_PATH = "/api/processFulltextDocument"
+
+
+def parse_pdf_via_grobid(
+    pdf_bytes: bytes,
+    *,
+    endpoint: str = "",
+    fetcher: Callable[[str, bytes], str] | None = None,
+) -> ParsedPaper:
+    """PDF 兜底：交 GROBID 解析成 TEI，再走 ``parse_grobid_tei``。
+
+    ``endpoint`` 为空时**不假装解析成功**：返回 ``source_kind="needs-grobid"``
+    与空正文，由调用方显式降级为"元数据+摘要"并标注原因。这条分支必须存在——
+    spec 曾断言"无源论文经 GROBID 解析入库"，而仓里连客户端都没有，等于
+    验证一个不存在的组件；现在组件在，能不能用由配置说真话。
+    """
+    if not endpoint:
+        return ParsedPaper(source_kind="needs-grobid")
+    url = endpoint.rstrip("/") + GROBID_PROCESS_PATH
+    if fetcher is None:
+        fetcher = _grobid_post
+    try:
+        tei = fetcher(url, pdf_bytes)
+    except Exception:  # noqa: BLE001 - 解析失败如实留空，绝不返回伪文本
+        return ParsedPaper(source_kind="needs-grobid")
+    if not tei or not tei.strip():
+        return ParsedPaper(source_kind="needs-grobid")
+    return parse_grobid_tei(tei)
+
+
+def _grobid_post(url: str, pdf_bytes: bytes, timeout: int = 120) -> str:
+    """默认 GROBID 调用：multipart/form-data POST，返回 TEI XML 文本。"""
+    import urllib.request
+    from uuid import uuid4
+
+    boundary = "----fdtext" + uuid4().hex
+    body = b"".join(
+        [
+            f"--{boundary}\r\n".encode(),
+            b'Content-Disposition: form-data; name="input"; filename="paper.pdf"\r\n',
+            b"Content-Type: application/pdf\r\n\r\n",
+            pdf_bytes,
+            f"\r\n--{boundary}--\r\n".encode(),
+        ]
+    )
+    req = urllib.request.Request(
+        url,
+        data=body,
+        headers={
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+            "User-Agent": "Mozilla/5.0 (compatible; fd-text-core/1.0)",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return resp.read().decode("utf-8", errors="ignore")
 
 
 def iter_sections(p: ParsedPaper) -> Iterable[tuple[str, str]]:

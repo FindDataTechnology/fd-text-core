@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 import time
+import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
 from collections.abc import Callable, Iterator
@@ -26,10 +27,28 @@ UA = "Mozilla/5.0 (compatible; fd-text-core/1.0)"
 # 60s 默认超时必然读空。不带 from/until 的裸 set= 查询会被服务端挂住不返回，
 # 故日期窗是必需参数而非可选优化（见 harvest_metadata 的 docstring）。
 LIST_RECORDS_TIMEOUT = 240
+#: e-print 单篇取源的超时。TeX 源多为几百 KB，但含图的大包可到几十 MB；
+#: 给到 180s 足以覆盖实测慢尾，又不至于让一篇卡死整批（失败按篇降级）。
+EPRINT_TIMEOUT = 180
 
 
 class HarvestError(RuntimeError):
     """采集失败（限速/网络/解析）。"""
+
+
+class EprintError(HarvestError):
+    """单篇 e-print 取源失败。
+
+    带 ``arxiv_id`` 与状态码，因为调用方要按篇降级并**如实记账**：
+    只报"某次采集失败"会让"为什么这篇没有全文"无从追查——全文缺失的原因
+    必须能落到具体论文与具体原因上（见 LICENSE-NOTE 与 Req2 的降级条款）。
+    """
+
+    def __init__(self, arxiv_id: str, reason: str, *, status: int | None = None) -> None:
+        self.arxiv_id = arxiv_id
+        self.reason = reason
+        self.status = status
+        super().__init__(f"e-print {arxiv_id} 取源失败: {reason}" + (f" (HTTP {status})" if status else ""))
 
 
 @dataclass
@@ -107,6 +126,34 @@ def _get(url: str, timeout: int = LIST_RECORDS_TIMEOUT) -> bytes:
     req = urllib.request.Request(url, headers={"User-Agent": UA})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return resp.read()
+
+
+def fetch_eprint(
+    paper: Paper,
+    *,
+    throttler: Throttler | None = None,
+    fetcher: Callable = _get,
+    timeout: int = EPRINT_TIMEOUT,
+) -> bytes:
+    """取单篇 e-print 原始字节（LaTeX 源或 PDF-only 提交的 PDF）。
+
+    为什么要单独一个函数：``Paper.fulltext_url`` 早就写好了，但没有任何调用点，
+    于是"逐篇取 PDF/LaTeX 源"只活在模块 docstring 里。取源是限速管辖下的网络动作，
+    必须走同一个 ``Throttler``（1 请求/3 秒、单连接），不能由调用方随手 ``urlopen``
+    绕开——ToU 的限额是按请求算的，不是按接口算的。
+
+    失败抛 ``EprintError``（带 ``status``），由调用方按篇降级为元数据+摘要，
+    而不是让一篇 404 打断整批采集。
+    """
+    t = throttler or Throttler()
+    t.wait()
+    url = paper.fulltext_url
+    try:
+        return fetcher(url, timeout)
+    except urllib.error.HTTPError as e:  # type: ignore[attr-defined]
+        raise EprintError(paper.arxiv_id, f"HTTPError: {e}", status=getattr(e, "code", None)) from e
+    except Exception as e:  # noqa: BLE001 - 按篇降级，不中断整批
+        raise EprintError(paper.arxiv_id, f"{type(e).__name__}: {e}") from e
 
 
 def _text(node, path: str, ns: dict | None = None) -> str:
