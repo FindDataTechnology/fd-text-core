@@ -69,9 +69,13 @@ replace(
         name="papers",
         strategy=SlidingWindow(target=1200, max_size=1800),
         facets=FACETS,
-        # 词表键叫 cat，而 arXiv 的原始类目落在 metadata.categories（数组）里。
-        # 不声明这条映射，按类目过滤永远返回空集（2026-11-13 生产实测）。
-        facet_paths={"cat": ("categories", "overlap")},
+        # 两处键位错配，不声明就恒空（2026-11-13 生产实测，均 0 命中）：
+        #  · cat：arXiv 原始类目落在 metadata.categories（数组）里，要按包含匹配；
+        #  · origin：取值在**表列** origin 上，metadata 里没有这个键。
+        facet_paths={
+            "cat": ("categories", "overlap"),
+            "origin": ("origin", "column"),
+        },
         parser=PaperParser(),
         tsv_config="simple",
         presets=PRESETS,

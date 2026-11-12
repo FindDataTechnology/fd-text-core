@@ -89,6 +89,13 @@ def _filters_sql(domain: str, facets: dict, origin: str | None) -> tuple[str, li
             # 数组包含：一篇 cs.CL+cs.LG 的交叉论文在两个取值下都能命中
             clauses.append("d.metadata->%s ?| %s")
             params += [meta_key, list(vals)]
+        elif mode == "column":
+            # 取值在**表列**上而不在 metadata 里（如 origin）——按 metadata 查会恒空。
+            # 列名无法参数化，故必须过 _IDENT（注入面在这里）。
+            if not _IDENT.match(str(meta_key)):
+                raise FacetError(f"facet 映射到非法列名: {meta_key}")
+            clauses.append(f"d.{meta_key} = ANY(%s)")
+            params.append(list(vals))
         else:
             clauses.append("d.metadata->>%s = ANY(%s)")
             params += [meta_key, list(vals)]

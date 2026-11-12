@@ -579,7 +579,7 @@ def test_every_declared_facet_resolves_to_a_storage_path():
         v = registry.get(domain)
         for key in v.facets:
             meta_key, mode = (v.facet_paths or {}).get(key, (key, "eq"))
-            assert meta_key and mode in {"eq", "overlap"}, (domain, key, meta_key, mode)
+            assert meta_key and mode in {"eq", "overlap", "column"}, (domain, key, meta_key, mode)
 
 
 def test_papers_cat_vocabulary_covers_the_measured_corpus():
@@ -596,3 +596,38 @@ def test_papers_cat_vocabulary_covers_the_measured_corpus():
             "q-fin.CP", "q-fin.EC", "econ.GN", "quant-ph", "eess.IV", "math.PR"}
     missing = seen - cats
     assert not missing, f"词表缺实测出现过的类目: {sorted(missing)}"
+
+
+def test_papers_origin_facet_reads_the_column_not_metadata():
+    """origin 的取值在**表列**上，metadata 里没有这个键。
+
+    2026-11-13 生产实测：`metadata->>'origin'` = crawl 得 0 篇，而 `origin` 列
+    = crawl 得 60 篇 —— 按 origin facet 过滤恒空。这与 cat 是同一族的两个变体
+    （一个是数组键、一个是列），所以映射方式要能声明。
+    """
+    from fd_text_core.querylib import _filters_sql
+
+    where, params = _filters_sql("papers", {"origin": ["crawl"]}, None)
+    assert "d.origin = ANY(%s)" in where, f"应直接过滤表列，实际: {where!r}"
+    assert "metadata" not in where, f"metadata 里没有 origin 键，不能走 JSONB: {where!r}"
+    assert params == [["crawl"]], params
+
+
+def test_column_mode_rejects_unsafe_names():
+    """列名无法参数化，必须过白名单——否则 facet 名就是注入面。"""
+    from fd_text_core.querylib import FacetError, _filters_sql
+
+    class FakeVertical:
+        facets = {"odd": frozenset({"x"})}
+        facet_paths = {"odd": ("origin; drop table corpus_documents", "column")}
+
+    import fd_text_core.querylib as q
+
+    orig = q.get_vertical
+    q.get_vertical = lambda domain: FakeVertical()
+    try:
+        import pytest
+        with pytest.raises(FacetError, match="非法列名"):
+            _filters_sql("papers", {"odd": ["x"]}, None)
+    finally:
+        q.get_vertical = orig
