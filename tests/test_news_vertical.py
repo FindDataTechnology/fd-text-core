@@ -41,3 +41,32 @@ def test_clean_text_preserves_content():
     cleaned = clean_news_text(raw)
     assert "正文 有全角空格。" in cleaned
     assert "\r" not in cleaned
+
+
+def test_loader_projects_every_declared_facet():
+    """词表声明的每个 facet 都必须在入库时被写入。
+
+    2026-11-13 实测：news 词表三件里 has_body 从未落库，于是任何 has_body 过滤
+    恒 0 命中（生产 5908 篇全无该键）。空集被读成"没有这类文档"，而不是
+    "字段没写"—— 这条把"声明即必须落库"钉住。
+    """
+    import importlib.util
+    from pathlib import Path
+
+    spec = importlib.util.spec_from_file_location(
+        "load_news_spool", Path(__file__).resolve().parents[1] / "scripts" / "load_news_spool.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    docs, skipped = mod.rows_to_docs([
+        {"source": "cn-announcement", "source_id": "A1", "content": "公司发布公告，正文若干。",
+         "title": "公告", "url": "https://example.invalid/1", "published_at": "2026-11-01"},
+        {"source": "cn-announcement", "source_id": "A2", "content": ""},  # 缺正文：应被 skip
+    ])
+    assert len(docs) == 1 and len(skipped) == 1, skipped
+    md = docs[0].metadata
+    for facet in get("news").facets:
+        assert facet in md, f"词表声明了 {facet} 却未落库——按它过滤会恒 0"
+    assert md["has_body"] == "true"
+    assert md["source_type"] in get("news").facets["source_type"]
+    assert md["lang"] in get("news").facets["lang"]
