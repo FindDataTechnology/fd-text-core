@@ -536,3 +536,63 @@ def test_skip_source_types_parsing_and_default():
     finally:
         os.environ.pop("FDTEXT_EMBED_SKIP_SOURCE_TYPES", None)
         importlib.reload(embed_worker)
+
+
+
+def test_papers_cat_facet_uses_array_overlap():
+    """类目 facet 必须走数组包含：键名错位会让按类目过滤恒空。
+
+    2026-11-13 生产实测：`metadata->>'cat'` 对这 60 篇全为 NULL（真键是
+    `categories`），于是 `cat=cs.CL` 返回 0 篇、而语料里确有 4 篇 cs.CL。
+    空集被读成"没有这类论文"比报错更坏，所以把翻译后的 SQL 与参数都钉住。
+    """
+    from fd_text_core.querylib import _filters_sql
+
+    where, params = _filters_sql("papers", {"cat": ["cs.CL"]}, None)
+    assert "?|" in where, f"应使用数组包含，实际 SQL: {where!r}"
+    assert "->>" not in where, f"等值匹配会把数组比成字符串，实际: {where!r}"
+    assert params == ["categories", ["cs.CL"]], params
+
+
+def test_facet_without_mapping_stays_equality():
+    """没有声明的垂域保持原语义（同名键、等值）——引擎不写死任何特例。"""
+    from fd_text_core.querylib import _filters_sql
+
+    where, params = _filters_sql("screenplay", {"period": ["modern"]}, None)
+    assert "->>" in where and "?|" not in where, where
+    assert params == ["period", ["modern"]]
+
+    where, params = _filters_sql("papers", {"has_fulltext": ["true"]}, None)
+    assert "?|" not in where, where
+    assert params == ["has_fulltext", ["true"]]
+
+
+def test_every_declared_facet_resolves_to_a_storage_path():
+    """词表里的每个 facet 键都要能落到一个真实存储键上（同名或声明映射）。
+
+    挡的是"词表加了个键但没人写这个键"——那会让过滤静默变空。真实命中由
+    test_papers_cat_facet_uses_array_overlap 与生产谓词复验各自负责。
+    """
+    from fd_text_core.verticals import registry
+
+    for domain in ("papers", "gov", "screenplay", "news"):
+        v = registry.get(domain)
+        for key in v.facets:
+            meta_key, mode = (v.facet_paths or {}).get(key, (key, "eq"))
+            assert meta_key and mode in {"eq", "overlap"}, (domain, key, meta_key, mode)
+
+
+def test_papers_cat_vocabulary_covers_the_measured_corpus():
+    """词表要覆盖语料实际出现的类目，否则 cs.CV 这种一查就被拒。
+
+    2026-11-13 实测 60 篇、43 个类目，而旧词表只有 8 个。这条不查数据库
+    （单测不连库），只钉住"已知出现过的类目必须在词表里"这一小撮样本；
+    全量覆盖由 docstring 里的刷新命令与语料扩容时的复核负责。
+    """
+    from fd_text_core.verticals import registry
+
+    cats = registry.get("papers").facets["cat"]
+    seen = {"cs.LG", "math.NA", "cs.NA", "cs.AI", "cs.CV", "stat.ML", "cs.CL",
+            "q-fin.CP", "q-fin.EC", "econ.GN", "quant-ph", "eess.IV", "math.PR"}
+    missing = seen - cats
+    assert not missing, f"词表缺实测出现过的类目: {sorted(missing)}"

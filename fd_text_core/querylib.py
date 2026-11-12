@@ -73,11 +73,25 @@ def _tsv_config(domain: str) -> str:
 
 
 def _filters_sql(domain: str, facets: dict, origin: str | None) -> tuple[str, list]:
-    """把 facet 翻译成 metadata JSONB 过滤条件。"""
+    """把 facet 翻译成 metadata JSONB 过滤条件。
+
+    默认 facet 名就是 metadata 键、按等值匹配。垂域可用 ``facet_paths`` 声明
+    例外——papers 的 ``cat`` 存在 ``metadata.categories``（数组）里，必须按包含
+    匹配，否则 ``->>'cat'`` 恒 NULL，**按类目过滤静默返回空集**
+    （实测 2026-11-13：0 篇 vs 实际 4 篇 cs.CL）。空集被读成"没有这类论文"
+    比报错更坏，所以匹配方式也要能声明。
+    """
+    paths = getattr(get_vertical(domain), "facet_paths", {}) or {}
     clauses, params = [], []
     for key, vals in facets.items():
-        clauses.append("d.metadata->>%s = ANY(%s)")
-        params += [key, list(vals)]
+        meta_key, mode = paths.get(key, (key, "eq"))
+        if mode == "overlap":
+            # 数组包含：一篇 cs.CL+cs.LG 的交叉论文在两个取值下都能命中
+            clauses.append("d.metadata->%s ?| %s")
+            params += [meta_key, list(vals)]
+        else:
+            clauses.append("d.metadata->>%s = ANY(%s)")
+            params += [meta_key, list(vals)]
     if origin:
         clauses.append("d.origin = %s")
         params.append(origin)

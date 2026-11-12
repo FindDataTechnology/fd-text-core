@@ -8,8 +8,20 @@ from ...chunking import SlidingWindow
 from ...presets import Preset
 from ..registry import Vertical, bootstrap_defaults, replace
 
+#: 类目词表：**按实测语料分布定**（2026-11-13，fd-prod 60 篇，43 个类目）。
+#: 之前只列了 8 个，于是 cs.CV（9 篇）、math.NA（13 篇）这类一查就被词表拒掉——
+#: 用户看到的是"垂域无 facet 取值"，不是"没有这类论文"。语料扩容时须同步刷新
+#: （刷新命令：select distinct jsonb_array_elements_text(metadata->'categories') …）。
 FACETS = {
-    "cat": frozenset({"q-fin", "q-fin.CP", "q-fin.ST", "cs.CL", "cs.LG", "econ.GN", "econ.EM", "stat.ML"}),
+    "cat": frozenset({
+        "cs.AI", "cs.AR", "cs.CC", "cs.CE", "cs.CL", "cs.CR", "cs.CV", "cs.DB",
+        "cs.DC", "cs.DL", "cs.DM", "cs.DS", "cs.GT", "cs.IR", "cs.IT", "cs.LG",
+        "cs.LO", "cs.MA", "cs.MS", "cs.NA", "cs.NI", "cs.RO", "cs.SD", "cs.SE",
+        "cs.SI", "cs.SY", "econ.EM", "econ.GN", "eess.AS", "eess.IV", "eess.SY",
+        "math.CO", "math.DS", "math.IT", "math.NA", "math.OC", "math.OA", "math.PR",
+        "math.ST", "nlin.CD", "physics.geo-ph", "q-bio.NC", "q-fin", "q-fin.CP",
+        "q-fin.EC", "q-fin.ST", "quant-ph", "stat.ME", "stat.ML", "stat.TH",
+    }),
     "origin": frozenset({"crawl", "upload"}),
     "has_fulltext": frozenset({"true", "false"}),
 }
@@ -57,6 +69,9 @@ replace(
         name="papers",
         strategy=SlidingWindow(target=1200, max_size=1800),
         facets=FACETS,
+        # 词表键叫 cat，而 arXiv 的原始类目落在 metadata.categories（数组）里。
+        # 不声明这条映射，按类目过滤永远返回空集（2026-11-13 生产实测）。
+        facet_paths={"cat": ("categories", "overlap")},
         parser=PaperParser(),
         tsv_config="simple",
         presets=PRESETS,

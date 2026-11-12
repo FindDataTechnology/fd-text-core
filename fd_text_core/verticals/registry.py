@@ -22,6 +22,12 @@ class Vertical:
     t2s: bool = True  # cjk 垂域下是否把繁体折简（默认开——繁体底本+简体查询是常态；
     #                  训诂/版本比对类垂域可关，关闭时写入与查询同时不归一）
     presets: dict = field(default_factory=dict)  # 检索预设包（见 presets 模块）
+    #: facet 名 → (metadata 键, 匹配方式)。缺省空 = 同名键 + 等值匹配。
+    #: 为什么需要它：papers 的词表键是 ``cat``，而 arXiv 的原始类目存在
+    #: ``metadata.categories``（数组）里，``->>'cat'`` 恒为 NULL，于是按类目过滤
+    #: **静默返回空集**（实测 2026-11-13：0 篇 vs 实际 4 篇 cs.CL）。空集被读成
+    #: "没有这类论文"比报错还坏。映射写在垂域配置里，引擎不写死任何垂域特例。
+    facet_paths: dict[str, tuple[str, str]] = field(default_factory=dict)
     language: str = "multi"
     display: str = ""
 
