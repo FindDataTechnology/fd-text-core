@@ -205,7 +205,29 @@ register_kg_tools(mcp, _err=_err)
 
 
 def main() -> None:  # pragma: no cover
-    mcp.run(transport="http", host="0.0.0.0", port=int(os.environ.get("PORT", "8000")))
+    serve_http(int(os.environ.get("PORT", "8000")))
+
+
+def serve_http(port: int) -> None:  # pragma: no cover - 传输层
+    """HTTP 面：配了 ``MCP_BEARER_TOKEN`` 才套共享 bearer 门，否则原样跑。
+
+    未配置分支保持 ``mcp.run(transport="http")``——与接入前逐字节一致。这是
+    「开关关闭时行为不变」唯一可靠的实现方式：不是挂一个内部空转的中间件。
+    """
+    from .auth import BearerAuthMiddleware, configured_token
+
+    if not configured_token():
+        mcp.run(transport="http", host="0.0.0.0", port=port)
+        return
+
+    import uvicorn
+    from starlette.middleware import Middleware
+
+    uvicorn.run(
+        mcp.http_app(middleware=[Middleware(BearerAuthMiddleware)]),
+        host="0.0.0.0",
+        port=port,
+    )
 
 
 if __name__ == "__main__":  # pragma: no cover

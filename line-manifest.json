@@ -6,16 +6,25 @@
     "issuer": "https://auth.finddatatech.cloud/oidc",
     "jwks_uri": "https://auth.finddatatech.cloud/oidc/jwks",
     "jit_policy": "off",
-    "note": "本仓零入站凭据校验：`FastMCP(\"fd-text-core\", ...)` 未传 auth、未挂中间件（server.py:17）。仓内 `api_key` 全是**出站**嵌入调用凭据（config.py:32-58、embedding.py:48-86）。无断言兑换端点，jit_policy=off。"
+    "note": "生产态今天仍是零入站凭据校验——`FastMCP(\"fd-text-core\", ...)` 未传 auth（server.py:17），部署也没注入任何 token。但**代码里已备好共享 bearer 门**：`fd_text_core/auth.py` 的 `BearerAuthMiddleware`（恒时比较、`MCP_BEARER_TOKEN` 每请求重读、lifespan 放行），未设变量则 `serve_http()` 原样走 `mcp.run(transport=\"http\")`（server.py:207-229，与接入前逐字节一致）。仓内 `api_key` 全是**出站**嵌入调用凭据（config.py:32-58、embedding.py:48-86）。无断言兑换端点，jit_policy=off。"
   },
   "auth_tracks": [
+    {
+      "kind": "line-native",
+      "name": "mcp-bearer-token",
+      "accepts": "line-native-key",
+      "fallback": false,
+      "enforced": false,
+      "migration_task": "converge-line-identity-and-keys#8.6",
+      "note": "线自有共享钥匙，**代码已落地并真机验过**（单测 9 条 + 真 ASGI 栈：无凭据 401 `{\"error\":\"unauthorized\"}`、带正确 bearer 的 `initialize` 200），但**未在运行路径生效**：生产部署没有 `MCP_BEARER_TOKEN`，且经 MCP 网关的消费者拿不到自己的 Authorization（网关按设计剥离调用方凭据）——现在翻开关会把本线所有网关消费者打成 401。翻转前提见 8.6 三步（网关侧按 server 注入 → 部署注入同一值 → 才翻变量），先例=law-bench `gateway-reach-for-shared-token-mcp`。"
+    },
     {
       "kind": "customer-key",
       "accepts": "ciyuan-sk",
       "fallback": false,
       "enforced": false,
       "migration_task": "converge-line-identity-and-keys#8.3",
-      "note": "未接：本仓不解析入站凭据。"
+      "note": "未接：本仓不解析 `sk-`。目标态是客户拿词元钥匙直打本线；在 8.6 的共享钥匙通之前，客户只能经平台。"
     }
   ],
   "scopes": [
@@ -30,5 +39,5 @@
     "account": false,
     "admin": false
   },
-  "note": "23 个只读工具：公版剧本库/论文元数据/部委公文/资讯条目四域混合检索（关键词 ⊕ 向量）+ KG 车道（FalkorDB 时序图谱）。垂域以配置接入，故工具面随配置增减。"
+  "note": "23 个只读工具：公版剧本库/论文元数据/部委公文/资讯条目四域混合检索（关键词 ⊕ 向量）+ KG 车道（FalkorDB 时序图谱）。垂域以配置接入，故工具面随配置增减。**8.6 的模板线之一**：`fd_text_core/auth.py` 与 fd-info / fd-open-data-mcp / fd-cn-report 的门逐行同形。"
 }
