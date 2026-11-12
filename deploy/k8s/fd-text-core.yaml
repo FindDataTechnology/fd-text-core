@@ -22,9 +22,10 @@ spec:
           # 2026-10-22 出片。上一版 sha-1806fe5 对应真源 263155c。
           # 2026-11-12 sha-abbe929：线自有共享 bearer 门（change converge-line-identity-and-keys 8.6），
           # 快照源真 aa715e77（含 fd_text_core/auth.py + 服务入口的 serve_http 分支）。
-          # 2026-11-13 sha-7aa80bf：+ /.well-known/line-manifest.json 自描述端点（1.4 投影，公开免鉴权；
-          # 镜像新增 COPY line-manifest.json，门的 EXEMPT_PATHS 同步加该路径）；回滚=sha-abbe929
-          image: ccr.ccs.tencentyun.com/finddata/fd-text-core:sha-7aa80bf
+          # 2026-11-13 sha-f3a2fc0：三处 facet 修复 + facet 覆盖门。快照源真 890e383d5
+          # （13f61e2 facet 覆盖门 / 57c3c68 origin column 模式 / fcf2187 news has_body /
+          #  fbef517 papers cat→categories）；回滚=sha-7aa80bf
+          image: ccr.ccs.tencentyun.com/finddata/fd-text-core:sha-f3a2fc0
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
