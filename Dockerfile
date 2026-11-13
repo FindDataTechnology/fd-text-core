@@ -26,6 +26,11 @@ RUN pip install --no-cache-dir '.[kg]' \
 COPY fd_text_core/ ./fd_text_core/
 COPY scripts/ ./scripts/
 COPY deploy/ ./deploy/
+# 工具面 manifest（mcp-surface-contract 的「上牌」）：`scripts/selfcheck_surface.py`
+# 从仓根读它，读了才能断言「注册的工具 == 声明的工具」。不 COPY 进镜像，容器里跑
+# selfcheck 只会得到「manifest 缺失 = 未上牌」——部署物上的表面契约无法自证。
+# 与第 13 行 line-manifest 同一个坑，故这次一并加了守卫测试（test_dockerfile_copies_*）。
+COPY tool-surface.json ./
 
 EXPOSE 8000
 
