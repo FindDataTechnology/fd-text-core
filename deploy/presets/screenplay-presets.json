@@ -2,7 +2,7 @@
   "schema": "facet-preset-suite/v1",
   "id": "text-screenplay-presets",
   "brand_name": "剧本",
-  "description": "剧本垂域检索预设包：结构分析 / 角色检索 / 场景检索 / 相似段落。数据来自 fd-text-core 引擎（公版经典剧本库：莎士比亚、希腊悲剧、元杂剧、明清传奇）。",
+  "description": "剧本垂域检索预设包（4 个预设）",
   "mcp_servers": [
     "fd-text-core"
   ],
@@ -18,7 +18,7 @@
     },
     {
       "name": "character",
-      "description": "角色检索：查某角色的台词与出场段落（name 传角色名，如 竇娥 / Hamlet）",
+      "description": "角色检索：name 传角色名（如 Hamlet / 竇娥），query 传空串即可——模板 {name} 会整体替换 query，故 query 的内容不参与检索",
       "params": {
         "channels": "hybrid",
         "limit": 30

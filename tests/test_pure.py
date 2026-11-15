@@ -386,6 +386,73 @@ class TestPresets:
         except FacetError:
             pass
 
+    def test_committed_manifest_payload_matches_code(self):
+        """落盘的 manifest 与代码里的预置必须逐条相同（2026-11-15 审计补）。
+
+        `presets_manifest()` 此前**只有测试在调**，而 `deploy/presets/` 下那份是
+        手工维护的 ⇒ 谁在代码里加/改预置，给市场看的那份就静默落后。这里钉的是
+        **载荷**：信封键（visibility/commercial_ready/…）由市场侧手写，归
+        `MARKET_ENVELOPE`，不由生成器造。
+        """
+        self._load()
+        import json
+        from pathlib import Path
+
+        from fd_text_core.presets import MARKET_ENVELOPE, presets_manifest
+
+        path = Path(__file__).resolve().parents[1] / "deploy" / "presets" / "screenplay-presets.json"
+        disk = json.loads(path.read_text(encoding="utf-8"))
+        code = presets_manifest("screenplay")
+        assert disk["schema"] == code["schema"]
+        assert disk["presets"] == code["presets"], "落盘预置与代码不一致：跑 python -m fd_text_core.presets screenplay <path> --write"
+        # 信封键只许是已知那几个，防止有人往这份文件里塞生成器管不到又不登记的字段
+        assert set(disk) - set(code) <= set(MARKET_ENVELOPE), sorted(set(disk) - set(code) - set(MARKET_ENVELOPE))
+
+    def test_character_preset_documents_the_callable_shape(self):
+        """`character` 的说明必须写出可调用的形状（2026-11-15 生产实测补）。
+
+        工具契约里 `query` 是必填（4 个垂域的 `*_search` 被 `test_kg_tools.py` 的冻结
+        快照钉着 `required:[query]`），而本预置的模板是 `{name}` —— 现场实测：只传
+        `name` 会被参数校验拒（`Missing required argument: query`），说明里若不写
+        「query 传空串」，调用方照着文档做必然失败。这里把**形状**钉住：
+        模板替换只认 name，query 的内容不参与检索。
+        """
+        self._load()
+        from fd_text_core.verticals.registry import get
+
+        p = get("screenplay").presets["character"]
+        assert p.query_template == "{name}"
+        assert p.render_query("", {"name": "Hamlet"}) == "Hamlet"
+        assert p.render_query("任意文字", {"name": "竇娥"}) == "竇娥"
+        assert "空串" in p.description, "说明没写 query 可传空串 ⇒ 照文档调用会被参数校验拒"
+
+    def test_merge_manifest_keeps_envelope_and_refreshes_payload(self):
+        """merge 只接管代码该拥有的键；市场信封原样带过，陈旧预置被刷掉。"""
+        self._load()
+        from fd_text_core.presets import merge_manifest, presets_manifest
+
+        stale = {
+            "schema": "facet-preset-suite/v1",
+            "id": "text-screenplay-presets",
+            "brand_name": "旧品牌名",
+            "description": "旧的描述",
+            "mcp_servers": ["fd-text-core"],
+            "presets": [{"name": "gone", "description": "已从代码里删掉的预置",
+                         "params": {}, "query_template": None}],
+            "visibility": "public",
+            "commercial_ready": False,
+            "commercial_blockers": ["未注册公网 gateway"],
+            "tags": ["剧本"],
+        }
+        merged = merge_manifest("screenplay", stale)
+        code = presets_manifest("screenplay")
+        assert merged["presets"] == code["presets"]            # 载荷归代码
+        assert merged["brand_name"] == code["brand_name"]      # 品牌名归代码
+        assert "gone" not in [p["name"] for p in merged["presets"]]
+        for k in ("visibility", "commercial_ready", "commercial_blockers", "tags"):
+            assert merged[k] == stale[k], k                    # 信封原样带过
+
+
 
 # ---------- 融合权重（change fusion-weight-vector-tilt） ----------
 
