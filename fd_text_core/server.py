@@ -212,14 +212,18 @@ def main() -> None:  # pragma: no cover
 
 
 def serve_http(port: int) -> None:  # pragma: no cover - 传输层
-    """HTTP 面：配了 ``MCP_BEARER_TOKEN`` 才套共享 bearer 门，否则原样跑。
+    """HTTP 面：配了共享钥匙或词元轨才套门，否则原样跑。
 
     未配置分支保持 ``mcp.run(transport="http")``——与接入前逐字节一致。这是
     「开关关闭时行为不变」唯一可靠的实现方式：不是挂一个内部空转的中间件。
-    """
-    from .auth import BearerAuthMiddleware, configured_token
 
-    if not configured_token():
+    谓词必须是 ``gate_enabled()`` 而不是 ``configured_token()``：只开词元轨的部署
+    （客户拿 ``sk-`` 换票直调、不再共用一把线钥匙）若用旧谓词，中间件不会被挂上，
+    数据面对匿名请求全放行而日志无声（见 ``auth.gate_enabled`` 的注释）。
+    """
+    from .auth import BearerAuthMiddleware, gate_enabled
+
+    if not gate_enabled():
         mcp.run(transport="http", host="0.0.0.0", port=port)
         return
 

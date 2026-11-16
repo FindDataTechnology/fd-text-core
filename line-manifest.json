@@ -24,7 +24,7 @@
       "fallback": false,
       "enforced": false,
       "migration_task": "converge-line-identity-and-keys#8.3",
-      "note": "未接：本仓不解析 `sk-`。目标态是客户拿词元钥匙直打本线；在 8.6 的共享钥匙通之前，客户只能经平台。"
+      "note": "**代码已落、尚未在役**（2026-11-17，converge-line-identity-and-keys 8.7）：本仓现在**离线验签**门 K 的短命票（`aud`/`source` 都必须是 `text-core`，≤600 秒，公钥来自 `FD_TEXT_CORE_LINE_TOKEN_PUBLIC_KEY_PEM` 或 `FD_TEXT_CORE_LINE_TOKEN_JWKS_URI`），见 `fd_text_core/line_token.py` 与 `auth.py` 的两轨门。客户手里仍是 `sk-`——换成 JWT 的那一步在平台网关（`gateway/line-token-exchange.js`），本线**不解析 `sk-`**、也不回调查询。`enforced` 仍为 false：部署侧还没注入 `FD_TEXT_CORE_LINE_TOKEN_*`，所以这条轨在线上是「声明了但没挂上」。在役判据（出片后实测）：本线票 **200** / 匿名 **401** / 别线票 **401**。"
     }
   ],
   "scopes": [
