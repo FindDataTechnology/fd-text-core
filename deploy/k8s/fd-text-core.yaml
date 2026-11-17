@@ -29,7 +29,14 @@ spec:
           # char_end，被 limit 截掉的尾巴按游标续读拿不回来——news 1748/5083 篇、
           # screenplay 17/17 篇受影响）；同时片里补上 tool-surface.json（c9612dd）。
           # 快照源真 b08731ba9；回滚=sha-7942eec
-          image: ccr.ccs.tencentyun.com/finddata/fd-text-core:sha-75eaf30
+          # 2026-11-17 sha-221cab0：门 K 词元票轨（change converge-line-identity-and-keys 8.7），
+          # 快照源真 0129a0a749（快照仓 testaction005/build-pool@221cab0c）。含
+          # fd_text_core/line_token.py + auth.py 两轨门 + serve_http 谓词换 gate_enabled()
+          # + pyjwt[crypto] 声明；另带 0c7b879（live 守卫测试）与 1c7c792（预设 manifest
+          # 刷新入口）两笔此前未滚的提交。**行为中性**：生产没有注入 FD_TEXT_CORE_LINE_TOKEN_*，
+          # 词元轨是 not_configured，与旧片等价（镜像内实测：匿名 401 / 假令牌 401 /
+          # 自描述端点 200 / 共享钥匙过门）。回滚=sha-75eaf30
+          image: ccr.ccs.tencentyun.com/finddata/fd-text-core:sha-221cab0
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
