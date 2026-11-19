@@ -408,6 +408,24 @@ class TestPresets:
         # 信封键只许是已知那几个，防止有人往这份文件里塞生成器管不到又不登记的字段
         assert set(disk) - set(code) <= set(MARKET_ENVELOPE), sorted(set(disk) - set(code) - set(MARKET_ENVELOPE))
 
+    def test_character_preset_documents_the_callable_shape(self):
+        """`character` 的说明必须写出可调用的形状（2026-11-15 生产实测补）。
+
+        工具契约里 `query` 是必填（4 个垂域的 `*_search` 被 `test_kg_tools.py` 的冻结
+        快照钉着 `required:[query]`），而本预置的模板是 `{name}` —— 现场实测：只传
+        `name` 会被参数校验拒（`Missing required argument: query`），说明里若不写
+        「query 传空串」，调用方照着文档做必然失败。这里把**形状**钉住：
+        模板替换只认 name，query 的内容不参与检索。
+        """
+        self._load()
+        from fd_text_core.verticals.registry import get
+
+        p = get("screenplay").presets["character"]
+        assert p.query_template == "{name}"
+        assert p.render_query("", {"name": "Hamlet"}) == "Hamlet"
+        assert p.render_query("任意文字", {"name": "竇娥"}) == "竇娥"
+        assert "空串" in p.description, "说明没写 query 可传空串 ⇒ 照文档调用会被参数校验拒"
+
     def test_merge_manifest_keeps_envelope_and_refreshes_payload(self):
         """merge 只接管代码该拥有的键；市场信封原样带过，陈旧预置被刷掉。"""
         self._load()

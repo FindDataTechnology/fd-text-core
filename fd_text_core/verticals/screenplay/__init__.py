@@ -24,7 +24,13 @@ PRESETS = {
     ),
     "character": Preset(
         name="character",
-        description="角色检索：查某角色的台词与出场段落（name 传角色名，如 竇娥 / Hamlet）",
+        # 说明必须写出**可调用的形状**：`query` 在工具契约里是必填（4 个垂域的
+        # `*_search` 都被 tests/test_kg_tools.py 的冻结快照钉着 required:[query]），
+        # 而本预置的模板 `{name}` 会整体替换 query ⇒ 调用方要传 `query` 但它不参与检索。
+        # 2026-11-15 在生产 MCP 面实测：只传 name 会被参数校验拒（Missing required
+        # argument: query），照旧说明调用必然失败。
+        description="角色检索：name 传角色名（如 Hamlet / 竇娥），query 传空串即可"
+                    "——模板 {name} 会整体替换 query，故 query 的内容不参与检索",
         params={"channels": "hybrid", "limit": 30},
         query_template="{name}",
     ),

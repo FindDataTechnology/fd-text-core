@@ -132,7 +132,12 @@ def keyword_search(domain: str, query: str, limit: int, facets: dict | None = No
                      kw_score DESC, c.document_id, c.chunk_no
             LIMIT %s
         """
-        rows = fetch_all(sql, [tq, domain, tq, query] + params + [limit])
+        # 参数顺序必须与**占位符在 SQL 文本里的先后**一致。{where} 插在
+        # `c.tsv @@ …` 之后、`ORDER BY … ILIKE` 之前，所以 facets 的参数要排在
+        # query 之前——曾经写成 `[tq, domain, tq, query] + params`，于是带 facet 的
+        # 关键词查询把 query 灌进元数据键位、把元数据键灌进数组位，
+        # 直接报 `malformed array literal`（2026-11-13 生产实测）。
+        rows = fetch_all(sql, [tq, domain, tq] + params + [query, limit])
     else:
         # ILIKE（大小写不敏感）与 plainto_tsquery 的大小写折叠语义对齐。
         sql = f"""
@@ -147,7 +152,8 @@ def keyword_search(domain: str, query: str, limit: int, facets: dict | None = No
             LIMIT %s
         """
         cfg = _tsv_config(domain)
-        rows = fetch_all(sql, [cfg, query, domain, cfg, query, query] + params + [limit])
+        # 同上：facets 的参数排在 ILIKE 的 query 之前（占位符在 SQL 里就在它前面）。
+        rows = fetch_all(sql, [cfg, query, domain, cfg, query] + params + [query, limit])
     for r in rows:
         r["by"] = "keyword"
     return rows
@@ -306,7 +312,22 @@ def hybrid_search(
 
 
 def read_chunks(document_id: int, offset: int = 0, limit: int = 4000) -> dict | None:
-    """按 document_id 顺序读切片内容；返回 None 表示文档不存在。"""
+    """按 doc_id + 字符偏移顺序读正文；返回 None 表示文档不存在。
+
+    无损分页契约（2026-11-13 修，之前有静默丢字）：
+
+    * `text` SHALL 从**字符位置 `offset`** 开始（不是从所在块的起点开始）；
+    * `next_offset` SHALL 等于 `offset + len(text)` —— 与**实际交付的字符数**一致，
+      而不是最后一个块的 `char_end`；
+    * 读到末尾（本页之后的块也取不到内容）时 `next_offset` 为 **None**。
+
+    修之前的写法是 `next_offset = rows[-1]["char_end"]`，而 `text` 被 `[:limit]` 截断：
+    只要本页各块的总长超过 `limit`，被截掉的尾巴就**永久不可达**——按 `next_offset`
+    续读会直接跳过它。生产实测（2026-11-13，doc 7467，2041 字符）：`limit=500` 只拿到
+    500 字符，`next_offset` 却是 2041，中间 1541 字符（75%）续读拿不回来。
+    影响面不小：news 5083 篇里 1748 篇、screenplay 17/17 篇正文超过默认 limit 4000，
+    最长 19 万字符——一次默认调用就能丢掉十几万字符，且**不报错**。
+    """
     doc = fetch_one(
         "SELECT id, domain, title, source, source_id, provenance, cold_block_key, metadata "
         "FROM corpus_documents WHERE id=%s AND status='current'",
@@ -314,18 +335,42 @@ def read_chunks(document_id: int, offset: int = 0, limit: int = 4000) -> dict | 
     )
     if doc is None:
         return None
+    start = max(0, int(offset))
+    want = max(1, int(limit))
     rows = fetch_all(
         """
         SELECT chunk_no, chunk_text, char_start, char_end, section_path
         FROM corpus_chunks WHERE document_id=%s AND char_end > %s
         ORDER BY chunk_no LIMIT %s
         """,
-        (document_id, offset, max(1, min(int(os.environ.get("FDTEXT_READ_LIMIT", "200")), 200))),
+        (document_id, start, max(1, min(int(os.environ.get("FDTEXT_READ_LIMIT", "200")), 200))),
     )
-    text = "".join(r["chunk_text"] for r in rows)[:limit]
+    parts: list[str] = []
+    for i, r in enumerate(rows):
+        t = r["chunk_text"]
+        # 首页可能从块中间开始：切掉 offset 之前的那截，保证 text 起点就是 offset。
+        lead = start - int(r["char_start"])
+        if i == 0 and lead > 0:
+            t = t[lead:]
+        parts.append(t)
+    text = "".join(parts)[:want]
+    # 判"还有没有": 拼起来的全部内容比 limit 长，或本页装下了所有块但仍有后续块
+    consumed = start + len(text)
+    has_more = len("".join(parts)) > len(text) or _has_chunks_after(document_id, rows)
     return {
         "document": doc,
         "chunks": rows,
         "text": text,
-        "next_offset": (rows[-1]["char_end"] if rows else offset),
+        "next_offset": (consumed if has_more and text else None),
     }
+
+
+def _has_chunks_after(document_id: int, rows: list[dict]) -> bool:
+    """本页之后是否还有块（只查一个，纯读）。"""
+    if not rows:
+        return False
+    tail = fetch_one(
+        "SELECT 1 AS x FROM corpus_chunks WHERE document_id=%s AND char_end > %s LIMIT 1",
+        (document_id, int(rows[-1]["char_end"])),
+    )
+    return tail is not None

@@ -20,7 +20,23 @@ spec:
           # 快照 sha（通用构建池 testaction005/build-pool 线）——
           # 对应真源 dfe0091（263155c 全部内容 + 嵌入客户端瞬时故障重试）。
           # 2026-10-22 出片。上一版 sha-1806fe5 对应真源 263155c。
-          image: ccr.ccs.tencentyun.com/finddata/fd-text-core:sha-a1ad54c
+          # 2026-11-12 sha-abbe929：线自有共享 bearer 门（change converge-line-identity-and-keys 8.6），
+          # 快照源真 aa715e77（含 fd_text_core/auth.py + 服务入口的 serve_http 分支）。
+          # 2026-11-13 sha-f3a2fc0：三处 facet 修复 + facet 覆盖门。快照源真 890e383d5
+          # （13f61e2 facet 覆盖门 / 57c3c68 origin column 模式 / fcf2187 news has_body /
+          #  fbef517 papers cat→categories）；回滚=sha-abbe929
+          # 2026-11-13 sha-75eaf30：+ 读取分页无损修复（b08731b：next_offset 曾取末块
+          # char_end，被 limit 截掉的尾巴按游标续读拿不回来——news 1748/5083 篇、
+          # screenplay 17/17 篇受影响）；同时片里补上 tool-surface.json（c9612dd）。
+          # 快照源真 b08731ba9；回滚=sha-7942eec
+          # 2026-11-17 sha-221cab0：门 K 词元票轨（change converge-line-identity-and-keys 8.7），
+          # 快照源真 0129a0a749（快照仓 testaction005/build-pool@221cab0c）。含
+          # fd_text_core/line_token.py + auth.py 两轨门 + serve_http 谓词换 gate_enabled()
+          # + pyjwt[crypto] 声明；另带 0c7b879（live 守卫测试）与 1c7c792（预设 manifest
+          # 刷新入口）两笔此前未滚的提交。**行为中性**：生产没有注入 FD_TEXT_CORE_LINE_TOKEN_*，
+          # 词元轨是 not_configured，与旧片等价（镜像内实测：匿名 401 / 假令牌 401 /
+          # 自描述端点 200 / 共享钥匙过门）。回滚=sha-75eaf30
+          image: ccr.ccs.tencentyun.com/finddata/fd-text-core:sha-221cab0
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
@@ -29,6 +45,16 @@ spec:
             - secretRef:
                 name: fd-text-core-env
           env:
+            # 8.6 翻转第二步：与注册表 backend auth 的 auth_credential 逐字节相同
+            # （注册表在出口把 Authorization 换成这把令牌；本线门按 Bearer 精确比较）。
+            # 未设=门不存在（与接入前逐字节一致）；设了才生效。值只在 Secret 里。
+            # 唯一的内部消费者 fd-info 已先在 FD_TEXT_CORE_TOKEN 配了同一个值
+            # （textcore_search.py:127 本来就发 `Authorization: Bearer <token>`）。
+            - name: MCP_BEARER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: fd-text-core-line-token
+                  key: MCP_BEARER_TOKEN
             - name: PORT
               value: "8000"
           resources:

@@ -20,6 +20,10 @@ dependencies = [
     "boto3",
     "zstandard",
     "pyyaml",
+    # 门 K 词元票的离线验签（converge-line-identity-and-keys 8.7）。**必须声明**：
+    # 漏声明时镜像里没有 PyJWT，线票轨静默 not_configured（门不挂）而本机测试照绿
+    # ——fd-info 当日就是靠这条注释记住的。`[crypto]` 带 ES256/EdDSA 需要的后端。
+    "pyjwt[crypto]>=2.8",
 ]
 
 [project.optional-dependencies]

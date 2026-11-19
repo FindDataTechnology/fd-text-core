@@ -47,7 +47,17 @@ def _run(mw, headers, *, path="/mcp", scope_type="http"):
 
 @pytest.fixture(autouse=True)
 def _clean_env(monkeypatch):
+    # 8.7 起门还有第二条轨（词元票）：只清 MCP_BEARER_TOKEN 不够——机器上导出了
+    # FD_TEXT_CORE_LINE_TOKEN_* 时「没配 token ⇒ 没门」会假红，而假红会把人引去
+    # 怀疑门坏了。两轨全清，断言才是关于代码的而不是关于本机环境的。
     monkeypatch.delenv(ENV_TOKEN, raising=False)
+    for env in (
+        "FD_TEXT_CORE_LINE_TOKEN_ISSUER",
+        "FD_TEXT_CORE_LINE_TOKEN_LINE",
+        "FD_TEXT_CORE_LINE_TOKEN_PUBLIC_KEY_PEM",
+        "FD_TEXT_CORE_LINE_TOKEN_JWKS_URI",
+    ):
+        monkeypatch.delenv(env, raising=False)
     yield
 
 
