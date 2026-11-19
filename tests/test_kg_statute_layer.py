@@ -31,7 +31,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from fd_text_core.kg_lane import statute_layer as sl  # noqa: E402
+from fd_text_core.kg_lane import statute_layer as sl
 
 FIXTURE = Path(__file__).resolve().parents[1] / "tests/fixtures/kg_statute/records.jsonl"
 

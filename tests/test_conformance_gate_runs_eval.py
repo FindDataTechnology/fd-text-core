@@ -22,7 +22,6 @@
 from __future__ import annotations
 
 import re
-import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -38,11 +37,11 @@ def test_disabled_eval_registers_a_skip_instead_of_vanishing():
     `return  # 未开启：...`（带行内注释），于是没匹配到、断言"通过"。
     改成允许行尾注释。这类假绿比没有测试更糟——它让人以为守住了。
     """
-    m = re.search(r"def check_retrieval_eval\(.*?\n(.*?)\n\ndef ", SRC, re.S)
+    m = re.search(r"def check_retrieval_eval\(.*?\n(.*?)\n\ndef ", SRC, re.DOTALL)
     assert m, "没找到 check_retrieval_eval 的函数体"
     head = m.group(1)[:1500]
 
-    bare_return = re.search(r"if not domain:\s*\n\s*return\b", head, re.M)
+    bare_return = re.search(r"if not domain:\s*\n\s*return\b", head, re.MULTILINE)
     assert bare_return is None, (
         "`if not domain: return` 仍然存在 —— 未开启时这项检查**根本不出现在结果里**，"
         "于是 --strict 也抓不到它，一个砍半召回率的改动能过门。"

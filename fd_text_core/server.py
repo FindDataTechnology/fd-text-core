@@ -9,10 +9,10 @@ import os
 
 from fastmcp import FastMCP
 
+from . import wellknown
 from .annotations import annotations_for
 from .db import UpstreamUnavailable
 from .querylib import FacetError, hybrid_search, read_chunks
-from . import wellknown
 from .verticals.registry import list_verticals
 
 mcp = FastMCP("fd-text-core", instructions="通用文本引擎：按垂域命名空间提供检索与读取工具。")

@@ -14,7 +14,7 @@ import pytest
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
-from fd_text_core import querylib  # noqa: E402
+from fd_text_core import querylib
 
 
 class _Capture:

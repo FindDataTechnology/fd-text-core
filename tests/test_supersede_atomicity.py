@@ -47,7 +47,8 @@ def ingest(monkeypatch):
     monkeypatch.setenv("FDTEXT_S3_BUCKET", "test-bucket")
     monkeypatch.setenv("FDTEXT_S3_ACCESS_KEY", "test")
     monkeypatch.setenv("FDTEXT_S3_SECRET_KEY", "test")
-    from fd_text_core import db, ingest as mod
+    from fd_text_core import db
+    from fd_text_core import ingest as mod
 
     db.reset_pool()
     yield mod

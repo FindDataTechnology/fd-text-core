@@ -15,9 +15,8 @@ import pytest
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
-from fd_text_core.eval import dataset as DS  # noqa: E402
-from fd_text_core.eval import runner as R  # noqa: E402
-
+from fd_text_core.eval import dataset as DS
+from fd_text_core.eval import runner as R
 
 # ---------- 数据集契约 ----------
 
@@ -254,8 +253,8 @@ def test_eval_module_has_no_llm_dependency():
 
 # ---------- 分级相关性 + nDCG（change eval-graded-harder-set） ----------
 
-from fd_text_core.eval.dataset import Grade, Query  # noqa: E402
-from fd_text_core.eval.runner import ndcg_at_k  # noqa: E402
+from fd_text_core.eval.dataset import Grade, Query
+from fd_text_core.eval.runner import ndcg_at_k
 
 
 def test_ndcg_ideal_order_is_one():

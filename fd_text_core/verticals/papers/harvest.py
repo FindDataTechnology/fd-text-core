@@ -152,7 +152,7 @@ def fetch_eprint(
         return fetcher(url, timeout)
     except urllib.error.HTTPError as e:  # type: ignore[attr-defined]
         raise EprintError(paper.arxiv_id, f"HTTPError: {e}", status=getattr(e, "code", None)) from e
-    except Exception as e:  # noqa: BLE001 - 按篇降级，不中断整批
+    except Exception as e:
         raise EprintError(paper.arxiv_id, f"{type(e).__name__}: {e}") from e
 
 

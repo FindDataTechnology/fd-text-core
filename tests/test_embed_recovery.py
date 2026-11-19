@@ -74,8 +74,8 @@ class _StubEmbedder:
 
 def _seed_failed(error: str) -> tuple[int, int]:
     """建一篇文档 + 切块 + 一条 failed 任务；返回 (task_id, chunk_count)。"""
-    from fd_text_core.db import execute, fetch_one
     from fd_text_core import ingest
+    from fd_text_core.db import execute, fetch_one
 
     ingest.load_documents(
         [ingest.Doc(domain=DOMAIN, source=SOURCE, source_id="doc1",

@@ -87,7 +87,7 @@ def register(mcp) -> None:
     from starlette.responses import Response
 
     @mcp.custom_route(WELL_KNOWN_PATH, methods=["GET"])
-    async def line_manifest(_request):  # noqa: ANN001 - ASGI 边界，不需要类型
+    async def line_manifest(_request):
         status, body, headers = manifest_response()
         return Response(
             content=body, status_code=status, media_type=_CONTENT_TYPE, headers=headers

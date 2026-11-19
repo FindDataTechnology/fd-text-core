@@ -4,12 +4,11 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from fd_text_core.chunking import chunk_text, verify_lossless  # noqa: E402
-from fd_text_core.verticals.registry import get, list_verticals  # noqa: E402
-from fd_text_core.verticals.screenplay.parser import parse_play  # noqa: E402
+from fd_text_core.chunking import chunk_text, verify_lossless
+from fd_text_core.verticals.registry import get, list_verticals
+from fd_text_core.verticals.screenplay.parser import parse_play
 
 WEST = """HAMLET
 ACT I

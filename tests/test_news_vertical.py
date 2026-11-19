@@ -1,6 +1,6 @@
 from fd_text_core.chunking import chunk_text, verify_lossless
 from fd_text_core.verticals.news.parser import clean_news_text, parse_news
-from fd_text_core.verticals.registry import get, load_verticals, list_verticals
+from fd_text_core.verticals.registry import get, list_verticals, load_verticals
 
 
 def test_news_is_a_registered_vertical():

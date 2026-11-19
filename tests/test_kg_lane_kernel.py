@@ -10,8 +10,8 @@ from datetime import datetime, timezone
 
 import pytest
 
-from fd_text_core.kg_lane import cost, embedding, eval as lane_eval, llm, query
-
+from fd_text_core.kg_lane import cost, embedding, llm, query
+from fd_text_core.kg_lane import eval as lane_eval
 
 # --------------------------------------------------------------------- LLM
 
@@ -584,8 +584,9 @@ def test_close_unterminated_ignores_brackets_inside_strings():
     旧实现用 `candidate.count("[") - candidate.count("]")`，字符串里出现
     方括号就会数错，补出畸形 JSON。必须逐字符扫描并跳过字符串内部。
     """
-    from fd_text_core.kg_lane import llm
     import json
+
+    from fd_text_core.kg_lane import llm
 
     raw = '{"note": "含[方括号]与{花括号}'  # 字符串内不配平，整体也缺右括号
     fixed = llm._close_unterminated(raw)
@@ -615,8 +616,9 @@ def test_close_unterminated_leaves_valid_json_untouched():
 # ------------ 未闭合字符串截断修复（kg-lane-delivery-v1 任务 1.3，10-21）
 def test_close_unterminated_string_mid_value():
     """字符串值中途截断：补闭引号，再按栈逆序补括号（`}]}` 而非 `]}}`）。"""
-    from fd_text_core.kg_lane import llm
     import json
+
+    from fd_text_core.kg_lane import llm
 
     raw = '{"entities": [{"name": "最高人'
     fixed = llm._close_unterminated(raw)
@@ -630,8 +632,9 @@ def test_close_unterminated_string_cut_right_after_backslash():
     钉死行为：悬挂反斜杠补成完整的 `\\\\`（字面反斜杠，**保留模型原内容**）
     再闭引号——`"foo\\` 修成 `"foo\\\\"`，解析值为 `foo\\`。
     """
-    from fd_text_core.kg_lane import llm
     import json
+
+    from fd_text_core.kg_lane import llm
 
     raw = '{"name": "foo\\'
     fixed = llm._close_unterminated(raw)
@@ -652,8 +655,9 @@ def test_close_unterminated_string_backslash_pairs_stay_intact():
 
 def test_close_unterminated_string_inside_nested_array():
     """嵌套数组里的字符串截断 + 悬挂转义：闭引号后括号仍按栈逆序 `]}]}`。"""
-    from fd_text_core.kg_lane import llm
     import json
+
+    from fd_text_core.kg_lane import llm
 
     raw = '{"rows": [[{"v": "x\\'
     fixed = llm._close_unterminated(raw)

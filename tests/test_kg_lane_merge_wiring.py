@@ -15,7 +15,6 @@ import pytest
 from fd_text_core.kg_lane import config as cfg
 from fd_text_core.kg_lane import lane, merge
 
-
 # --------------------------------------------------------------- 假 graphiti
 
 class _ScriptedLLM:

@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import asyncio
 
-
 from fd_text_core.server import mcp
 
 #: 本服务的码 → mcp-error-semantics 四类的对应关系。

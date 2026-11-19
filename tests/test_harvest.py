@@ -8,9 +8,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import pytest  # noqa: E402
+import pytest
 
-import fd_text_core.verticals.papers.harvest as H  # noqa: E402
+import fd_text_core.verticals.papers.harvest as H
 
 NS_R = 'xmlns="http://arxiv.org/OAI/arXivRaw/"'
 

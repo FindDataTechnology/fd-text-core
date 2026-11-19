@@ -8,11 +8,11 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from fd_text_core.chunking import SlidingWindow, chunk_text, verify_lossless  # noqa: E402
-from fd_text_core.coldstore import BlockFormatError, decode_block, encode_block  # noqa: E402
-from fd_text_core.provenance import Provenance, require_triplet  # noqa: E402
-from fd_text_core.querylib import FacetError, _validate_facets, rrf_fuse  # noqa: E402
-from fd_text_core.verticals.registry import get, list_verticals  # noqa: E402
+from fd_text_core.chunking import SlidingWindow, chunk_text, verify_lossless
+from fd_text_core.coldstore import BlockFormatError, decode_block, encode_block
+from fd_text_core.provenance import Provenance, require_triplet
+from fd_text_core.querylib import FacetError, _validate_facets, rrf_fuse
+from fd_text_core.verticals.registry import get, list_verticals
 
 
 @pytest.mark.parametrize(
@@ -122,7 +122,7 @@ def test_short_document_stores_content_and_blocks_decompose():
     """回归：阈值以下文档正文须存入 content 列并可被切块
     （缺陷实录：4 部剧本曾因正文无归处而 3 部失败）。
     """
-    from fd_text_core.ingest import Doc, COLD_STORE_MIN_CHARS
+    from fd_text_core.ingest import COLD_STORE_MIN_CHARS, Doc
 
     short = "短篇正文，长度远低于冷存阈值。" * 3
     assert len(short) < COLD_STORE_MIN_CHARS
@@ -181,7 +181,7 @@ def test_doc_strips_nul_bytes_from_content_title_and_metadata():
     assert d.metadata["entities"] == ["AB"]
     assert "k" in d.metadata, "dict 的键也要清洗"
     # 清洗在 content_hash 之前：脏数据反复摄取应得到同一哈希（否则每轮都判为新版）
-    assert d.content_hash == hashlib.sha256("正文左右".encode("utf-8")).hexdigest()
+    assert d.content_hash == hashlib.sha256("正文左右".encode()).hexdigest()
 
 
 def test_doc_leaves_clean_text_untouched_and_silent(caplog):
@@ -267,7 +267,7 @@ class TestVerticalLoading:
     """
 
     def test_builtin_verticals_loaded_and_authoritative(self):
-        from fd_text_core.verticals.registry import get, load_verticals, list_verticals
+        from fd_text_core.verticals.registry import get, list_verticals, load_verticals
 
         load_verticals()
         assert set(list_verticals()) >= {"papers", "screenplay"}
@@ -328,8 +328,8 @@ class TestPresets:
     def test_no_preset_vertical_returns_empty_list(self):
         """无预设垂域如实返回空集（两个内置域现均有预设 → 用临时注册域验证契约）。"""
         self._load()
-        from fd_text_core.presets import list_presets
         from fd_text_core.chunking import SlidingWindow
+        from fd_text_core.presets import list_presets
         from fd_text_core.verticals import registry as R
 
         name = "_test_nopresets"
@@ -544,7 +544,7 @@ def test_spool_rows_strip_html_at_ingest_boundary():
     from pathlib import Path as _Path
 
     sys.path.insert(0, str(_Path(__file__).resolve().parents[1] / "scripts"))
-    from load_news_spool import _strip_html_to_text  # noqa: E402
+    from load_news_spool import _strip_html_to_text
 
     html = (
         "<html><body>"

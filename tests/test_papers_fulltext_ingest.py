@@ -13,11 +13,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import pytest  # noqa: E402
+import pytest
 
-import fd_text_core.verticals.papers.fulltext as F  # noqa: E402
-import fd_text_core.verticals.papers.harvest as H  # noqa: E402
-from fd_text_core.verticals.papers.parser import parse_pdf_via_grobid  # noqa: E402
+import fd_text_core.verticals.papers.fulltext as F
+import fd_text_core.verticals.papers.harvest as H
+from fd_text_core.verticals.papers.parser import parse_pdf_via_grobid
 
 TEX_BODY = r"""
 \documentclass{article}

@@ -20,8 +20,7 @@ import pytest
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
-from fd_text_core import ingest  # noqa: E402
-
+from fd_text_core import ingest
 
 # ---------- 假 S3 客户端：接口与 boto3 对齐（无 _bucket 等私有属性） ----------
 
