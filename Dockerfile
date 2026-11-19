@@ -1,5 +1,5 @@
 # fd-text-core — 通用文本引擎（纯基建）
-# 通道: GitHub Actions -> hkccr -> cheap-3 tcr-relay -> ccr
+# 通道: GitHub Actions -> hkccr -> the relay node tcr-relay -> ccr
 FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1 \

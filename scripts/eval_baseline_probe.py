@@ -7,7 +7,7 @@
   - tools/list 先核对签名，与本脚本声明的映射比对，不一致就报错而不是硬跑。
   - 每题的每次调用错误都作为证据入档（标注 error 字段），不静默丢弃。
 
-用法（zihan）:
+用法（the graph host）:
     python scripts/eval_baseline_probe.py \
         --questions /home/ubuntu/lexkg-data/eval_questions_legal.json \
         --url http://cheap6.mesh.finddata.cn:31884/mcp \

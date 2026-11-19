@@ -2,7 +2,7 @@
 
 **为什么不用 `MATCH (n) RETURN n`**：legal_v2 有 7 万节点、每个带 1024 维
 `name_embedding`，整节点回传等于把 ~300MB 结果集在小内存机上物化——
-2026-10-22 实测这么查之后 zihan 用户态整体卡死近半小时（sshd/HTTP 都只
+2026-10-22 实测这么查之后 the graph host 用户态整体卡死近半小时（sshd/HTTP 都只
 握手不回包）。判据只需要名字，`RETURN n.name` 让服务端不碰向量。
 
 判据：
@@ -11,7 +11,7 @@
   ③规模统计（节点/边/条级属性）
   ④脏文号（重复机关名）清零
 
-用法（zihan）:
+用法（the graph host）:
     python scripts/kg_graph_checks.py legal_v2 gov_v3
     python scripts/kg_graph_checks.py legal_v2 --json-out /tmp/checks.json
 """

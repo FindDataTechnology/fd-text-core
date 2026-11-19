@@ -3,7 +3,7 @@
 为什么只做 KG 侧：基线侧要走现役 MCP 工具（另一台机器/另一套凭据），
 两边分开跑再并排，比一个脚本里既连图库又连 MCP 更好排查。
 
-用法（zihan）:
+用法（the graph host）:
     set -a; . /home/ubuntu/lexkg-data/pilot.env; set +a
     python scripts/kg_lane_eval_probe.py --vertical legal \
         --questions <path> --episodes /home/ubuntu/lexkg-data/pilot_episodes.jsonl \

@@ -1,6 +1,6 @@
 """车道跑批器：按垂域配置把 episode 灌进图，断点续跑、逐条容错、自动记账。
 
-用法（zihan）:
+用法（the graph host）:
     set -a; . /home/ubuntu/lexkg-data/pilot.env; set +a
     python scripts/kg_lane_run.py --vertical legal \
         --episodes /home/ubuntu/lexkg-data/pilot_episodes.jsonl \
@@ -59,7 +59,7 @@ async def drop_graph(graphiti, group_id: str) -> None:
 def snapshot(uri: str, *, username: str = "", password: str = "") -> str:
     """对图实例做一次 BGSAVE（零持久化实例唯一的数据保全手段）。
 
-    为什么必须有：zihan 的 FalkorDB 是 `save` 空、AOF 关的零持久化实例
+    为什么必须有：the graph host 的 FalkorDB 是 `save` 空、AOF 关的零持久化实例
     （2026-10-21 复验报告记录）。2026-10-22 整机用户态卡死时，内存里
     152 篇散文（约 4 小时）没有任何落盘副本——只能在跑批过程中周期性快照。
     快照失败只告警不中断（保全尽力而为，跑批不该为它停）。

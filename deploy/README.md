@@ -38,13 +38,13 @@ rrf 向量侧权重 2.0（`b519ddb`）、摄取契约修复（`f27cdb9`）与检
 
 - `fd-infra-deploy/PORTS.md` §1.2 已登 **NodePort 31887**（Fd-prod 平台线，紧邻 lex 块 31882-31886）
 - 根 `MCP-REGISTRY.md` §1.0 已登「仅台账、未注册 gateway」行
-- cheap-3 `/etc/tcr-relay/repos.conf` 已加 `finddata/fd-text-core`（2026-10-11）
+- the relay node `/etc/tcr-relay/repos.conf` 已加 `finddata/fd-text-core`（2026-10-11）
 
 v1 **不注册公网 gateway 入口**——引擎只对集群内/网内 NodePort 直连开放（change 验收口径）。
 
 ## 发布通道
 
-git push → GitHub Actions（`.github/workflows/image.yml`）→ hkccr → cheap-3 tcr-relay（5 分钟同步）→ ccr。
+git push → GitHub Actions（`.github/workflows/image.yml`）→ hkccr → the relay node tcr-relay（5 分钟同步）→ ccr。
 详参根仓 `docs/IMAGE-RELEASE.md` 的六步新仓清单。
 
 ## 尚未完成的一步（需用户出手）
@@ -75,14 +75,14 @@ kubectl --context cheap -n argocd apply -f deploy/argocd/application.yaml
 > 2026-11-13：图库（KG 车道）也已迁进集群，`LEXKG_FALKORDB_URI` 指向
 > `redis://falkordb.fd-prod.svc.cluster.local:6379`（清单在
 > `fd-infra-deploy/all-services/prod/falkordb.yaml`）。笔记本上的旧实例
-> `100.64.0.10:6379` 只作为回滚窗口保留，不再是消费目标。
+> 旧的 Redis 地址只作为回滚窗口保留，不再是消费目标。
 > **`LEXKG_FALKORDB_USERNAME` 必须为空或不存在**：实例只设了 `requirepass`，
 > 填了非空用户名会让客户端走两参 `AUTH`，直接 WRONGPASS。
 
 ```bash
 kubectl --context cheap-ts -n fd-prod create secret generic fd-text-core-env \
   --from-literal=FDTEXT_DATABASE_URL='postgresql://fd_text_app:<pwd>@fd-text-pg.fd-prod.svc.cluster.local:5432/fd_text' \
-  --from-literal=FDTEXT_S3_ENDPOINT='http://100.64.0.11:9000' \
+  --from-literal=FDTEXT_S3_ENDPOINT='http://<object-store-host>:9000' \
   --from-literal=FDTEXT_S3_BUCKET='fd-text' \
   --from-literal=FDTEXT_S3_ACCESS_KEY='<key>' \
   --from-literal=FDTEXT_S3_SECRET_KEY='<secret>' \

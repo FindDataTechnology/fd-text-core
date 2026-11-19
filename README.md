@@ -1,5 +1,7 @@
 # fd-text-core
 
+> **Part of the [Wire line (寻数·柏讯)](https://www.finddatatech.cloud/products/wire) of [FindData](https://www.finddatatech.cloud)** — the text engine: corpus ingest, chunked retrieval and domain verticals (news, papers) served as a retrieval API.
+
 通用文本处理引擎（纯基础设施，无产品面）。OpenSpec change：`text-engine-foundation`。
 
 ## 它解决什么
