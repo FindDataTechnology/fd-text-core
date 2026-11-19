@@ -14,3 +14,6 @@ venv/
 fd_text_dev.db
 reports/
 !reports/.keep
+
+# graph cache (derived, not source)
+graphify-out/
