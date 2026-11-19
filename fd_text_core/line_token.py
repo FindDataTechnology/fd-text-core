@@ -30,15 +30,16 @@ PEM 或 JWKS，**不回调网关、不逐请求问计费**——网关挂了只�
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 __all__ = [
-    "MAX_TTL_SECONDS",
     "ENV_ISSUER",
+    "ENV_JWKS_URI",
     "ENV_LINE",
     "ENV_PEM",
-    "ENV_JWKS_URI",
+    "MAX_TTL_SECONDS",
     "LineTokenIdentity",
     "LineTokenRejected",
     "LineTokenSettings",
