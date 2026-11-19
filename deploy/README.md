@@ -71,7 +71,13 @@ kubectl --context cheap -n argocd apply -f deploy/argocd/application.yaml
 > 2026-11-12：`FDTEXT_DATABASE_URL` 已指向集群内专用实例
 > `fd-text-pg.fd-prod.svc.cluster.local:5432`（清单在
 > `fd-infra-deploy/all-services/prod/fd-text-pg.yaml`），角色是库属主 `fd_text_app`。
-> 下面那行 `admin@100.64.0.10` 是迁移前的历史写法，保留只为说明键名集合。
+>
+> 2026-11-13：图库（KG 车道）也已迁进集群，`LEXKG_FALKORDB_URI` 指向
+> `redis://falkordb.fd-prod.svc.cluster.local:6379`（清单在
+> `fd-infra-deploy/all-services/prod/falkordb.yaml`）。笔记本上的旧实例
+> `100.64.0.10:6379` 只作为回滚窗口保留，不再是消费目标。
+> **`LEXKG_FALKORDB_USERNAME` 必须为空或不存在**：实例只设了 `requirepass`，
+> 填了非空用户名会让客户端走两参 `AUTH`，直接 WRONGPASS。
 
 ```bash
 kubectl --context cheap-ts -n fd-prod create secret generic fd-text-core-env \
@@ -82,8 +88,16 @@ kubectl --context cheap-ts -n fd-prod create secret generic fd-text-core-env \
   --from-literal=FDTEXT_S3_SECRET_KEY='<secret>' \
   --from-literal=FDTEXT_EMBEDDING_API_BASE='https://api.siliconflow.cn/v1' \
   --from-literal=FDTEXT_EMBEDDING_API_KEY='<siliconflow-key>' \
-  --from-literal=FDTEXT_EMBEDDING_MODEL='Qwen/Qwen3-Embedding-0.6B'
+  --from-literal=FDTEXT_EMBEDDING_MODEL='Qwen/Qwen3-Embedding-0.6B' \
+  --from-literal=LEXKG_FALKORDB_URI='redis://falkordb.fd-prod.svc.cluster.local:6379' \
+  --from-literal=LEXKG_FALKORDB_PASSWORD='<pwd>' \
+  --from-literal=LEXKG_EMBED_BASE_URL='<embed-base>' \
+  --from-literal=LEXKG_EMBED_API_KEY='<embed-key>' \
+  --from-literal=LEXKG_EMBED_MODEL='<embed-model>' \
+  --from-literal=LEXKG_EMBED_DIM='1024'
 ```
+
+`LEXKG_FALKORDB_USERNAME` 不要给（见上）。`LEXKG_EMBED_PROVIDER_ONLY` 视部署口径可选。
 
 凭据当前记在根仓 `INFRA-NOTES.md`「fd-text-core 专用 PG」段与 RustFS 段落。
 

@@ -386,6 +386,55 @@ class TestPresets:
         except FacetError:
             pass
 
+    def test_committed_manifest_payload_matches_code(self):
+        """落盘的 manifest 与代码里的预置必须逐条相同（2026-11-15 审计补）。
+
+        `presets_manifest()` 此前**只有测试在调**，而 `deploy/presets/` 下那份是
+        手工维护的 ⇒ 谁在代码里加/改预置，给市场看的那份就静默落后。这里钉的是
+        **载荷**：信封键（visibility/commercial_ready/…）由市场侧手写，归
+        `MARKET_ENVELOPE`，不由生成器造。
+        """
+        self._load()
+        import json
+        from pathlib import Path
+
+        from fd_text_core.presets import MARKET_ENVELOPE, presets_manifest
+
+        path = Path(__file__).resolve().parents[1] / "deploy" / "presets" / "screenplay-presets.json"
+        disk = json.loads(path.read_text(encoding="utf-8"))
+        code = presets_manifest("screenplay")
+        assert disk["schema"] == code["schema"]
+        assert disk["presets"] == code["presets"], "落盘预置与代码不一致：跑 python -m fd_text_core.presets screenplay <path> --write"
+        # 信封键只许是已知那几个，防止有人往这份文件里塞生成器管不到又不登记的字段
+        assert set(disk) - set(code) <= set(MARKET_ENVELOPE), sorted(set(disk) - set(code) - set(MARKET_ENVELOPE))
+
+    def test_merge_manifest_keeps_envelope_and_refreshes_payload(self):
+        """merge 只接管代码该拥有的键；市场信封原样带过，陈旧预置被刷掉。"""
+        self._load()
+        from fd_text_core.presets import merge_manifest, presets_manifest
+
+        stale = {
+            "schema": "facet-preset-suite/v1",
+            "id": "text-screenplay-presets",
+            "brand_name": "旧品牌名",
+            "description": "旧的描述",
+            "mcp_servers": ["fd-text-core"],
+            "presets": [{"name": "gone", "description": "已从代码里删掉的预置",
+                         "params": {}, "query_template": None}],
+            "visibility": "public",
+            "commercial_ready": False,
+            "commercial_blockers": ["未注册公网 gateway"],
+            "tags": ["剧本"],
+        }
+        merged = merge_manifest("screenplay", stale)
+        code = presets_manifest("screenplay")
+        assert merged["presets"] == code["presets"]            # 载荷归代码
+        assert merged["brand_name"] == code["brand_name"]      # 品牌名归代码
+        assert "gone" not in [p["name"] for p in merged["presets"]]
+        for k in ("visibility", "commercial_ready", "commercial_blockers", "tags"):
+            assert merged[k] == stale[k], k                    # 信封原样带过
+
+
 
 # ---------- 融合权重（change fusion-weight-vector-tilt） ----------
 
@@ -536,3 +585,98 @@ def test_skip_source_types_parsing_and_default():
     finally:
         os.environ.pop("FDTEXT_EMBED_SKIP_SOURCE_TYPES", None)
         importlib.reload(embed_worker)
+
+
+
+def test_papers_cat_facet_uses_array_overlap():
+    """类目 facet 必须走数组包含：键名错位会让按类目过滤恒空。
+
+    2026-11-13 生产实测：`metadata->>'cat'` 对这 60 篇全为 NULL（真键是
+    `categories`），于是 `cat=cs.CL` 返回 0 篇、而语料里确有 4 篇 cs.CL。
+    空集被读成"没有这类论文"比报错更坏，所以把翻译后的 SQL 与参数都钉住。
+    """
+    from fd_text_core.querylib import _filters_sql
+
+    where, params = _filters_sql("papers", {"cat": ["cs.CL"]}, None)
+    assert "?|" in where, f"应使用数组包含，实际 SQL: {where!r}"
+    assert "->>" not in where, f"等值匹配会把数组比成字符串，实际: {where!r}"
+    assert params == ["categories", ["cs.CL"]], params
+
+
+def test_facet_without_mapping_stays_equality():
+    """没有声明的垂域保持原语义（同名键、等值）——引擎不写死任何特例。"""
+    from fd_text_core.querylib import _filters_sql
+
+    where, params = _filters_sql("screenplay", {"period": ["modern"]}, None)
+    assert "->>" in where and "?|" not in where, where
+    assert params == ["period", ["modern"]]
+
+    where, params = _filters_sql("papers", {"has_fulltext": ["true"]}, None)
+    assert "?|" not in where, where
+    assert params == ["has_fulltext", ["true"]]
+
+
+def test_every_declared_facet_resolves_to_a_storage_path():
+    """词表里的每个 facet 键都要能落到一个真实存储键上（同名或声明映射）。
+
+    挡的是"词表加了个键但没人写这个键"——那会让过滤静默变空。真实命中由
+    test_papers_cat_facet_uses_array_overlap 与生产谓词复验各自负责。
+    """
+    from fd_text_core.verticals import registry
+
+    for domain in ("papers", "gov", "screenplay", "news"):
+        v = registry.get(domain)
+        for key in v.facets:
+            meta_key, mode = (v.facet_paths or {}).get(key, (key, "eq"))
+            assert meta_key and mode in {"eq", "overlap", "column"}, (domain, key, meta_key, mode)
+
+
+def test_papers_cat_vocabulary_covers_the_measured_corpus():
+    """词表要覆盖语料实际出现的类目，否则 cs.CV 这种一查就被拒。
+
+    2026-11-13 实测 60 篇、43 个类目，而旧词表只有 8 个。这条不查数据库
+    （单测不连库），只钉住"已知出现过的类目必须在词表里"这一小撮样本；
+    全量覆盖由 docstring 里的刷新命令与语料扩容时的复核负责。
+    """
+    from fd_text_core.verticals import registry
+
+    cats = registry.get("papers").facets["cat"]
+    seen = {"cs.LG", "math.NA", "cs.NA", "cs.AI", "cs.CV", "stat.ML", "cs.CL",
+            "q-fin.CP", "q-fin.EC", "econ.GN", "quant-ph", "eess.IV", "math.PR"}
+    missing = seen - cats
+    assert not missing, f"词表缺实测出现过的类目: {sorted(missing)}"
+
+
+def test_papers_origin_facet_reads_the_column_not_metadata():
+    """origin 的取值在**表列**上，metadata 里没有这个键。
+
+    2026-11-13 生产实测：`metadata->>'origin'` = crawl 得 0 篇，而 `origin` 列
+    = crawl 得 60 篇 —— 按 origin facet 过滤恒空。这与 cat 是同一族的两个变体
+    （一个是数组键、一个是列），所以映射方式要能声明。
+    """
+    from fd_text_core.querylib import _filters_sql
+
+    where, params = _filters_sql("papers", {"origin": ["crawl"]}, None)
+    assert "d.origin = ANY(%s)" in where, f"应直接过滤表列，实际: {where!r}"
+    assert "metadata" not in where, f"metadata 里没有 origin 键，不能走 JSONB: {where!r}"
+    assert params == [["crawl"]], params
+
+
+def test_column_mode_rejects_unsafe_names():
+    """列名无法参数化，必须过白名单——否则 facet 名就是注入面。"""
+    from fd_text_core.querylib import FacetError, _filters_sql
+
+    class FakeVertical:
+        facets = {"odd": frozenset({"x"})}
+        facet_paths = {"odd": ("origin; drop table corpus_documents", "column")}
+
+    import fd_text_core.querylib as q
+
+    orig = q.get_vertical
+    q.get_vertical = lambda domain: FakeVertical()
+    try:
+        import pytest
+        with pytest.raises(FacetError, match="非法列名"):
+            _filters_sql("papers", {"odd": ["x"]}, None)
+    finally:
+        q.get_vertical = orig

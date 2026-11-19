@@ -95,3 +95,59 @@ def fulltext_metadata(full_text: str, status: str) -> dict:
         "has_fulltext": "true" if full_text else "false",
         "fulltext_status": status,
     }
+
+
+def build_documents(
+    papers,
+    *,
+    with_fulltext: bool = False,
+    grobid_endpoint: str = "",
+    throttler: Throttler | None = None,
+    fetcher: Callable | None = None,
+    grobid_fetcher: Callable[[str, bytes], str] | None = None,
+) -> tuple[list[dict], dict]:
+    """把一批 ``Paper`` 组装成待入库条目 + 统计。**纯函数，不连库、不写盘。**
+
+    抽出来是为了让"默认不取全文"这条能被测试钉住：规格场景「全文通道默认关闭」
+    要求以默认参数运行时不发起任何 e-print 请求。这条若只写在规格里，没有任何
+    东西会拦住一次"顺手打开开关"的改动——上一版正是因为没有可测的组装函数，
+    "只索引摘要"这件事在测试层面完全不可观测。
+    """
+    items: list[dict] = []
+    status_counts: dict[str, int] = {}
+    with_full = 0
+    for p in papers:
+        full_text, status = "", STATUS_DISABLED
+        if with_fulltext:
+            full_text, status = acquire_fulltext(
+                p,
+                throttler=throttler,
+                fetcher=fetcher,
+                grobid_endpoint=grobid_endpoint,
+                grobid_fetcher=grobid_fetcher,
+            )
+        status_counts[status] = status_counts.get(status, 0) + 1
+        content = compose_content(p, full_text)
+        if not content:
+            continue
+        if full_text:
+            with_full += 1
+        items.append(
+            {
+                "arxiv_id": p.arxiv_id,
+                "title": p.title,
+                "content": content,
+                "metadata": {
+                    "authors": p.authors,
+                    "categories": p.categories,
+                    "license_url": p.license_url,
+                    **fulltext_metadata(full_text, status),
+                    "source_url": p.source_url,
+                },
+            }
+        )
+    return items, {
+        "total": len(items),
+        "with_fulltext": with_full,
+        "status_counts": status_counts,
+    }

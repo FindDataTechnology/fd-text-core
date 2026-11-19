@@ -118,7 +118,14 @@ def rows_to_docs(rows: list[dict]) -> tuple[list[Doc], list[str]]:
 
         # facet 投影（news 词表：source_type/lang/has_body）——facet 字段必须
         # 显式落库，否则按 facet 过滤恒 0 命中（load_gov 同款教训）。
+        # 2026-11-13 实测：词表三件里只写了 source_type/lang，has_body 从未落库，
+        # 于是任何 has_body 过滤恒 0（生产 5908 篇全无该键）。
         md["source_type"] = _facet_source_type(source)
+        # 恒为 true 是**构造保证**而不是巧合成：缺正文的行在上面就被 skip 了，
+        # 库里另有 ck_document_has_body 约束（content 或冷存指针非空）。
+        # 保留这个字段是因为分析面据此决定能否做逐字引用；将来若接入只有摘要的源，
+        # 这里就是记 false 的位置（届时须放宽上面的 skip 规则）。
+        md["has_body"] = "true" if content else "false"
 
         title = md["raw_title"] or None
         docs.append(

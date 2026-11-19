@@ -241,3 +241,58 @@ def test_grobid_client_parses_tei():
     assert out.source_kind == "grobid-tei"
     assert [p for p, _ in out.sections] == ["paper>Introduction", "paper>Method"]
     assert out.title == "PDF Only Paper"
+
+
+# ── 组装：默认模式不许发任何取源请求（规格场景「全文通道默认关闭」）──────────
+
+
+def test_default_mode_issues_zero_eprint_requests():
+    """规格写了「默认参数下不发起任何 e-print 请求」，这里把它钉住。
+
+    上一版没有可测的组装函数，于是"只索引摘要"在测试层面不可观测——
+    谁把开关默认值改成 True，全套测试照样绿。现在改默认值会当场红。
+    """
+    calls = []
+
+    def fetcher(url, timeout=180):
+        calls.append(url)
+        return TEX_BODY.encode()
+
+    items, summary = F.build_documents(
+        [_paper("2601.00001"), _paper("2601.00002")], fetcher=fetcher
+    )
+    assert calls == [], "默认模式不得发起任何 e-print 取源"
+    assert summary["with_fulltext"] == 0
+    assert summary["status_counts"] == {F.STATUS_DISABLED: 2}
+    assert all(it["metadata"]["has_fulltext"] == "false" for it in items)
+    assert all(it["metadata"]["fulltext_status"] == F.STATUS_DISABLED for it in items)
+
+
+def test_fulltext_mode_fetches_once_per_paper_and_counts_real_body():
+    calls = []
+
+    def fetcher(url, timeout=180):
+        calls.append(url)
+        return TEX_BODY.encode()
+
+    items, summary = F.build_documents(
+        [_paper("2601.00001"), _paper("2601.00002")], with_fulltext=True, fetcher=fetcher
+    )
+    assert len(calls) == 2, "全文模式每篇一次取源"
+    assert summary["with_fulltext"] == 2
+    assert summary["status_counts"] == {F.STATUS_LATEX: 2}
+    assert all("top and bottom quintiles" in it["content"] for it in items)
+
+
+def test_zero_success_is_visible_in_the_summary():
+    """`--with-fulltext` 却零成功：summary 必须让调用方能判出来（脚本据此非零退出）。"""
+
+    def fetcher(url, timeout=180):
+        raise TimeoutError("blocked")
+
+    items, summary = F.build_documents(
+        [_paper("2601.00001")], with_fulltext=True, fetcher=fetcher
+    )
+    assert summary["with_fulltext"] == 0
+    assert summary["status_counts"] == {F.STATUS_FETCH_ERROR: 1}
+    assert items[0]["metadata"]["has_fulltext"] == "false"

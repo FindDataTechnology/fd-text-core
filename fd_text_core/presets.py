@@ -129,3 +129,79 @@ def presets_manifest(domain: str) -> dict:
             for p in v.presets.values()
         ],
     }
+
+
+#: 落盘 manifest 里由**市场侧手写**的信封键：生成器既不产出、也不该覆盖它们。
+#: 2026-11-15 审计实测 `deploy/presets/screenplay-presets.json` 比生成器多出
+#: `visibility` / `commercial_ready` / `commercial_blockers` / `tags` 四个键，
+#: description 也更长（带数据来源与商业阻塞原因）。
+MARKET_ENVELOPE = ("visibility", "commercial_ready", "commercial_blockers", "tags")
+
+
+def merge_manifest(domain: str, existing: dict | None = None) -> dict:
+    """把**代码里的**预置刷进已落盘的 manifest，同时保留市场侧手写的信封。
+
+    ## 为什么需要这一步
+
+    审计 `2026-10-11-text-query-presets` 时发现：`presets_manifest()` 在整个仓里
+    **只有一个调用方——测试**，而 `deploy/presets/screenplay-presets.json` 是
+    手工维护的。两者之间没有任何联系 ⇒ 谁在代码里加/改一个预置，落盘那份就静默
+    落后，而它正是给市场看的形态。`presets` 载荷必须由代码拥有，信封键必须由人
+    拥有，这个函数就是那条分界线。
+
+    代码侧拥有的键：`schema` / `id` / `brand_name` / `description` / `mcp_servers`
+    / `presets`；`existing` 里其余键（`MARKET_ENVELOPE` 及以后可能新增的市场字段）
+    原样带过，**不用一份白名单去删它们**——那样每加一个市场字段都要改这里。
+    """
+    out = dict(existing or {})
+    out.update(presets_manifest(domain))
+    return out
+
+
+def _main(argv: list[str] | None = None) -> int:
+    """`python -m fd_text_core.presets <domain> <path> [--write]`
+
+    不带 `--write` 时只报差异（人读），带则落盘。**默认不写**：这个文件是给市场看
+    的形态，改它应当是一次显式动作。
+    """
+    import argparse
+    import json
+    from pathlib import Path
+
+    ap = argparse.ArgumentParser(description="刷新落盘的预设 manifest（保留市场信封）")
+    ap.add_argument("domain")
+    ap.add_argument("path")
+    ap.add_argument("--write", action="store_true", help="真的落盘（缺省只报差异）")
+    a = ap.parse_args(argv)
+
+    from .verticals.registry import load_verticals
+
+    load_verticals()
+    p = Path(a.path)
+    existing = json.loads(p.read_text(encoding="utf-8")) if p.is_file() else None
+    merged = merge_manifest(a.domain, existing)
+
+    if existing == merged:
+        print(f"已是最新：{p}（{len(merged['presets'])} 个预置）")
+        return 0
+    if existing is None:
+        print(f"新建：{p}")
+    else:
+        old = [x["name"] for x in existing.get("presets", [])]
+        new = [x["name"] for x in merged["presets"]]
+        print(f"预置差异：落盘 {old} → 代码 {new}")
+        dropped = sorted(set(merged) ^ set(existing))
+        if dropped:
+            print(f"信封键差异：{dropped}")
+    if a.write:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(merged, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        print(f"已写入：{p}")
+        return 0
+    print("（未写入，加 --write 才落盘）")
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(_main())
+

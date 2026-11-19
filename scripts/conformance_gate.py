@@ -44,6 +44,7 @@ HINTS = {
     "schema 漂移": ("FDTEXT_DATABASE_URL", "同上"),
     "垂域越界": ("--changed-base 或 --vertical-commits", "传入改动文件列表或垂域提交 sha"),
     "语料对账": ("FDTEXT_DATABASE_URL", "同上（连库后比对 loader 清单与库内 current 集）"),
+    "facet 覆盖": ("FDTEXT_DATABASE_URL", "同上（连库后比对词表与语料实存取值）"),
     "检索评测": ("--eval-domain <域> 或 --eval-all（+ FDTEXT_EMBEDDING_API_*）",
                  "同上，并注入嵌入凭据；或 python3 scripts/eval_retrieval.py --all --store"),
 }
@@ -678,6 +679,87 @@ def check_corpus_reconcile() -> None:
 
 
 # ---------- 6. 核心外部依赖 ----------
+def _facet_observed(domain: str, facet: str, path: tuple[str, str]) -> set[str]:
+    """某 facet 在库里的实存取值集合（纯读）。"""
+    from fd_text_core.db import fetch_all
+
+    meta_key, mode = path
+    if mode == "overlap":
+        rows = fetch_all(
+            "SELECT DISTINCT c v FROM corpus_documents d,"
+            " jsonb_array_elements_text(d.metadata->%s) c WHERE d.domain=%s",
+            (meta_key, domain),
+        )
+    elif mode == "column":
+        rows = fetch_all(
+            f"SELECT DISTINCT d.{meta_key} v FROM corpus_documents d WHERE d.domain=%s",
+            (domain,),
+        )
+    else:
+        rows = fetch_all(
+            "SELECT DISTINCT d.metadata->>%s v FROM corpus_documents d WHERE d.domain=%s",
+            (meta_key, domain),
+        )
+    return {r["v"] for r in rows if r["v"] is not None}
+
+
+def check_facet_coverage() -> None:
+    """词表 vs 语料实存取值：词表外的取值等于「查不到」。
+
+    为什么要有这一项：2026-11-13 三天内同一族三个实例（news has_body 从没落库、
+    papers cat 键位错、papers origin 取值在表列上），**全都静默返回空集**——
+    用户看到"没有这类文档"，而不是"配置错了"。单测只能钉住已知键位，
+    只有连库比对才能发现"词表里没有、数据里有"这种滞后。
+
+    违规判据（两种都算）：
+      · 实存取值不在词表内——按它过滤会被 FacetError 拒掉；
+      · facet 路径解析不到取值（实存 0 种）——说明键位声明错了或加载器没写。
+    词表里有、语料里没有的取值**不算违规**（只是还没有这类文档）。
+    """
+    section = "facet 覆盖"
+    url = os.environ.get("FDTEXT_DATABASE_URL", "")
+    if not url:
+        skip(section, "FDTEXT_DATABASE_URL")
+        return
+    from fd_text_core.verticals import registry
+
+    # 连不上/配置不全 → SKIP 而不是按 facet 报违规：那是环境问题，不是词表问题。
+    # （实测：库里没配 FDTEXT_S3_ENDPOINT 时 db 模块直接 ConfigError，若按违规记，
+    #  这道门会永远红且指向错误方向。）
+    try:
+        from fd_text_core.db import fetch_one
+
+        fetch_one("SELECT 1 AS ok")
+    except Exception as e:  # noqa: BLE001
+        skip(section, f"库不可用（{type(e).__name__}: {str(e)[:80]}）")
+        return
+
+    registry.load_verticals()
+    checked = 0
+    for domain in ("papers", "gov", "screenplay", "news"):
+        try:
+            vert = registry.get(domain)
+        except KeyError:
+            continue
+        paths = getattr(vert, "facet_paths", {}) or {}
+        for facet, vocab in vert.facets.items():
+            path = paths.get(facet, (facet, "eq"))
+            try:
+                observed = _facet_observed(domain, facet, path)
+            except Exception as e:  # noqa: BLE001 - 连库/查询错误按违规报，不静默
+                v(section, f"{domain}.{facet}: 取值查询失败 {type(e).__name__}: {e}")
+                continue
+            checked += 1
+            outside = sorted(observed - set(vocab))
+            if outside:
+                v(section, f"{domain}.{facet} (-> {path[0]}/{path[1]}): "
+                           f"词表外取值 {outside[:6]}（按它过滤查不到，须补词表或加 facet_paths）")
+            elif not observed:
+                v(section, f"{domain}.{facet} (-> {path[0]}/{path[1]}): 实存 0 种取值"
+                           f"（键位声明错了，或加载器没写这个字段）")
+    _settle(section, f"核对 {checked} 个 facet")
+
+
 def check_core_imports() -> None:
     """引擎核心模块不得 import 外部 keyed API 客户端。"""
     banned_dir = CORE_DIR  # 核心模块直接在包根，垂域在 verticals/ 子包
@@ -750,6 +832,7 @@ def cli() -> int:
     check_provenance()
     check_anchor()
     check_schema_drift()
+    check_facet_coverage()
     check_corpus_reconcile()
     check_vertical_boundary(boundary_files, allow_core=args.allow_core_change)
     check_core_imports()
