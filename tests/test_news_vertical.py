@@ -70,3 +70,44 @@ def test_loader_projects_every_declared_facet():
     assert md["has_body"] == "true"
     assert md["source_type"] in get("news").facets["source_type"]
     assert md["lang"] in get("news").facets["lang"]
+
+
+def test_iter_spool_fair_share_does_not_starve_small_sources(tmp_path):
+    """公平分配 limit：大源（cninfo 2 万+）不得挤死小源（news-rss）。
+
+    回归（2026-11-23 实测）：iter_spool 原为 list(folded)[:limit]，按 glob 序
+    取前 N，cninfo 单源就超 5000，排在它后面的 news-rss/sse 永远零入库——
+    text-core news 域只出现 cninfo/cn-gov/sse，news-rss 一条都没有。
+    """
+    import json
+    import importlib.util
+    from pathlib import Path
+
+    spec = importlib.util.spec_from_file_location(
+        "load_news_spool", Path(__file__).resolve().parents[1] / "scripts" / "load_news_spool.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    def write(source, n):
+        d = tmp_path / source / "structured"
+        d.mkdir(parents=True)
+        rows = [{"source": source, "source_id": f"{source}-{i}", "content": "x",
+                 "published_at": "2026-11-22"} for i in range(n)]
+        (d / "2026-11-22.jsonl").write_text(
+            "\n".join(json.dumps(r) for r in rows), encoding="utf-8")
+
+    # 大源 2 万 + 小源 120，总 limit 5000 —— 小源必须全数入选
+    write("cninfo", 20000)
+    write("news-rss", 120)
+    write("sse-interaction", 663)
+    write("cn-gov", 95)
+
+    rows = mod.iter_spool(tmp_path, limit=5000)
+    assert len(rows) == 5000
+    by_source = {}
+    for r in rows:
+        by_source[r["source"]] = by_source.get(r["source"], 0) + 1
+    # 每个小源都被公平看到：news-rss 全 120 入选，not 0
+    assert by_source.get("news-rss") == 120, by_source
+    assert by_source.get("sse-interaction") == 663, by_source
+    assert by_source.get("cn-gov") == 95, by_source

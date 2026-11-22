@@ -65,6 +65,13 @@ def iter_spool(spool: Path, limit: int = 5000) -> list[dict]:
     spool 是追加式：同一 (source, source_id) 修订会产生多行，后出现者胜
     （与 iter_structured 的字节序折叠同理；这里按 (source, day) 名排序读，
     天然时间序）。
+
+    **按 source 公平分配 limit**（防大源挤死小源）：曾有 bug——`list(folded)[:limit]`
+    按 glob 序取前 N 条，而 cninfo 单源就 2 万+，于是排在它后面的 news-rss /
+    sse-interaction 永远落不到前 5000 条里、**永久零入库**（2026-11-23 实测：
+    news-rss 120 条始终 skipped，text-core news 域 source 只有 cninfo/cn-gov/sse）。
+    改为：每源先给 ``limit // num_sources`` 的均等份额，多轮轮转吃掉余量，
+    直到用完 limit 或无源可补 —— 大源仍能靠多轮陆续入库，小源当轮必得名额。
     """
     folded: dict[str, dict] = {}
     files = sorted(spool.glob("*/structured/*.jsonl"))
@@ -82,8 +89,29 @@ def iter_spool(spool: Path, limit: int = 5000) -> list[dict]:
             if not (source and source_id):
                 continue
             folded[f"{source}:{source_id}"] = row
-    rows = list(folded.values())
-    return rows[:limit]
+
+    # 按 source 分组（保留各自折叠后的时间序）
+    by_source: dict[str, list[dict]] = {}
+    for row in folded.values():
+        by_source.setdefault(str(row.get("source")), []).append(row)
+
+    # 均等份额 + 轮转发余量，保证每源至少被看见
+    if not by_source:
+        return []
+    picked: list[dict] = []
+    cursors = {src: 0 for src in by_source}
+    per_round = max(1, limit // len(by_source))
+    while len(picked) < limit and any(
+        cursors[s] < len(rows) for s, rows in by_source.items()
+    ):
+        for src, rows in by_source.items():
+            if len(picked) >= limit:
+                break
+            start = cursors[src]
+            chunk = rows[start:start + per_round]
+            cursors[src] = start + len(chunk)
+            picked.extend(chunk)
+    return picked[:limit]
 
 
 def rows_to_docs(rows: list[dict]) -> tuple[list[Doc], list[str]]:
