@@ -10,7 +10,7 @@ from ...presets import Preset
 from ..registry import Vertical, bootstrap_defaults, replace
 
 FACETS = {
-    "source_type": frozenset({"announcement", "ministry", "interaction"}),
+    "source_type": frozenset({"announcement", "ministry", "interaction", "news"}),
     "lang": frozenset({"zh", "en"}),
     # 正文是否可取：分析面据此决定能否做逐字证据引用
     "has_body": frozenset({"true", "false"}),

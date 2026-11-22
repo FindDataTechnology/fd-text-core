@@ -182,6 +182,7 @@ def _facet_source_type(source: str) -> str:
         "cninfo": "announcement",
         "cn-gov": "ministry",
         "sse-interaction": "interaction",
+        "news-rss": "news",
     }
     return mapping.get(source, "announcement")
 

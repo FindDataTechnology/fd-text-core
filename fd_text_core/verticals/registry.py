@@ -137,7 +137,7 @@ def bootstrap_defaults() -> None:
             name="news",
             strategy=SlidingWindow(target=800, max_size=1500),
             facets={
-                "source_type": frozenset({"announcement", "ministry", "interaction"}),
+                "source_type": frozenset({"announcement", "ministry", "interaction", "news"}),
                 "lang": frozenset({"zh", "en"}),
                 "has_body": frozenset({"true", "false"}),
             },

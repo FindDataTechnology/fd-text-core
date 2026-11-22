@@ -9,7 +9,7 @@ def test_news_is_a_registered_vertical():
     vertical = get("news")
     assert vertical.cjk is True
     assert vertical.facets["source_type"] == frozenset(
-        {"announcement", "ministry", "interaction"}
+        {"announcement", "ministry", "interaction", "news"}
     )
     assert set(vertical.presets) == {"latest", "by_entity", "timeline", "similar"}
 
