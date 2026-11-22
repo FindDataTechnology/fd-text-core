@@ -7,11 +7,11 @@ name = "fd-text-core"
 version = "0.1.0"
 description = "通用文本处理引擎：摄取/结构化/索引/查询一体化底座，垂域以配置接入。纯基础设施，无产品面。"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = "MIT"
 authors = [{ name = "FindDataTechnology" }]
 dependencies = [
-    "fastmcp>=3.4,<4",
+    "fastmcp>=4.2.4,<5",
     "click",
     "uvicorn",
     "httpx",

@@ -1,5 +1,11 @@
 # fd-text-core
 
+<!-- deploy-location -->
+> **部署清单不在本仓。** 集群清单已迁至 `fd-infra-deploy/all-services/`，
+> Application 定义在 `fd-infra-deploy/argocd/`。
+> 原因与判据：`openspec/changes/consolidate-deploy-manifests`（2026-11-20）。
+
+
 > **Part of the [Wire line (寻数·柏讯)](https://www.finddatatech.cloud/products/wire) of [FindData](https://www.finddatatech.cloud)** — the text engine: corpus ingest, chunked retrieval and domain verticals (news, papers) served as a retrieval API.
 
 通用文本处理引擎（纯基础设施，无产品面）。OpenSpec change：`text-engine-foundation`。

@@ -1,3 +1,8 @@
+> **部署清单已迁走（2026-11-20）**
+> 本仓不再承载集群清单。清单在 `fd-infra-deploy/all-services/fd-text-core/`，
+> Application 定义在 `fd-infra-deploy/argocd/app-fd-text-core.yaml`。
+> 原因与判据：`openspec/changes/consolidate-deploy-manifests`。
+
 # fd-text-core 部署
 
 照 fd-legal-search-mcp 的新仓范式（2026-10-11 立项）。
