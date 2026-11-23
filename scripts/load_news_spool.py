@@ -209,12 +209,18 @@ def _strip_html_to_text(source: str, content: str) -> str:
 
 
 def _facet_source_type(source: str) -> str:
-    """source 名 → news 词表的 source_type facet（词表外归 announcement 基类）。"""
+    """source 名 → source_type facet（词表外归 announcement 基类）。
+
+    注意：govcn 政策文件是 gov 域的**正文语料**，必须嵌向量（语义检索要用），
+    不能落 announcement 基类——否则撞 EMBED_SKIP_SOURCE_TYPES=announcement 被跳过
+    不嵌（2026-11-23 实测：14831 篇 govcn 全被当 announcement 跳过）。
+    """
     mapping = {
         "cninfo": "announcement",
         "cn-gov": "ministry",
         "sse-interaction": "interaction",
         "news-rss": "news",
+        "govcn": "policy",
     }
     return mapping.get(source, "announcement")
 
