@@ -319,16 +319,41 @@ def main() -> int:
     # 于是 lastSuccessfulTime 一路前移、看板常绿——而检索面正在静默查不到这些文档
     # （实录 2026-11-08：4575 条待嵌、最老的 12.4 天，看板显示一切正常）。
     # 积压超龄即非零退出，让看板那条 job 变红；阈值默认 6h（稳态积压是分钟级）。
-    backlog = dbmod.fetch_one(
-        "SELECT count(*) AS n,"
-        " EXTRACT(EPOCH FROM (now() - min(created_at))) / 3600.0 AS hours"
-        " FROM embed_tasks WHERE state='pending'"
-    )
+    #
+    # **判据要排除「按策略不做的事」（2026-11-23 实撞）**：原来数的是全部
+    # `state='pending'`。而 `FDTEXT_EMBED_SKIP_SOURCE_TYPES=announcement`
+    # （2026-11-09 用户裁决：公告/财报不向量化）意味着这几万条 announcement
+    # **永远不该被嵌**——它们只在被 claim 到那一刻才转 `skipped`，而 claim
+    # 一轮只 10 条。于是这道闸看着一个永远清不完的队列，**恒红**：
+    # 实测 pending 25748 里 25463 是 announcement，真需要嵌的只有 95 条（最老 4.5h）。
+    # 一条恒红的闸比没有闸更糟——它教人忽略这条线，而这条线正是要抓
+    # 「绿着但向量缺失」的。
+    #
+    # 排除项与 `embed_worker.SKIP_SOURCE_TYPES` **同源**（不另写一份），
+    # 否则策略改了这边忘改，就变成「闸看的是旧策略」。
+    skip_types = sorted(embed_worker.SKIP_SOURCE_TYPES)
+    if skip_types:
+        backlog = dbmod.fetch_one(
+            "SELECT count(*) AS n,"
+            " EXTRACT(EPOCH FROM (now() - min(t.created_at))) / 3600.0 AS hours"
+            " FROM embed_tasks t"
+            " JOIN corpus_documents d ON d.id = t.document_id"
+            " WHERE t.state='pending'"
+            "   AND coalesce(d.metadata->>'source_type','') <> ALL(%s)",
+            (skip_types,),
+        )
+    else:
+        backlog = dbmod.fetch_one(
+            "SELECT count(*) AS n,"
+            " EXTRACT(EPOCH FROM (now() - min(created_at))) / 3600.0 AS hours"
+            " FROM embed_tasks WHERE state='pending'"
+        )
     hours = float(backlog["hours"]) if backlog and backlog["hours"] is not None else 0.0
     if hours > args.max_backlog_hours:
         print(
             f"[warn] 嵌入积压 {backlog['n']} 条，最老 {hours:.1f}h > 阈值 "
             f"{args.max_backlog_hours}h：向量缺失会让检索静默漏结果，本轮判不健康"
+            f"（已排除按策略不嵌的 {','.join(skip_types) or '无'}）"
         )
         return 1
     print(f"[queue] 嵌入积压 {backlog['n']} 条，最老 {hours:.1f}h（阈值 {args.max_backlog_hours}h）")
