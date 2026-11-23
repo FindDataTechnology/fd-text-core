@@ -276,7 +276,47 @@ def retry_rate_limited(stale_after: str = "10 minutes", limit: int = 500) -> int
     )
 
 
+def sweep_policy_skipped() -> int:
+    """把「按策略永远不嵌」的 pending 任务批量转 skipped（2026-11-23 实撞）。
+
+    为什么必须单独做，而不是等它被 claim 时再跳：`claim_batch` 按
+    `created_at` 升序取固定条数，而 announcement 这一类占比极高
+    （实测 pending 19813 条 announcement vs 58 条真要嵌的）。
+    它们挤在同一个队列里，每一轮 10 个名额绝大多数被它们占掉 ——
+    真任务要排很久才轮到，**上游再快也没用**。
+
+    改为：先批量落 skipped（它们本来就永不会被嵌），再从剩下的里 claim。
+    返回本次扫掉的条数，供日志核对。
+
+    幂等：只动 `state='pending'`，重复调用不会重复计数。
+    """
+    if not SKIP_SOURCE_TYPES:
+        return 0
+    row = fetch_one(
+        """
+        WITH moved AS (
+            UPDATE embed_tasks t SET state='skipped', finished_at=now()
+            WHERE t.state='pending'
+              AND t.id IN (
+                  SELECT t2.id FROM embed_tasks t2
+                  JOIN corpus_documents d ON d.id = t2.document_id
+                  WHERE t2.state='pending'
+                    AND coalesce(d.metadata->>'source_type','') = ANY(%s)
+              )
+            RETURNING 1
+        )
+        SELECT count(*)::int AS n FROM moved
+        """,
+        (sorted(SKIP_SOURCE_TYPES),),
+    )
+    return int((row or {}).get("n") or 0)
+
+
 def claim_batch(limit: int = 50) -> list[dict]:
+    # 先把「按策略永不嵌」的清出队列，别让它们抢走 claim 的名额（见 sweep_policy_skipped）。
+    swept = sweep_policy_skipped()
+    if swept:
+        print(f"[embed] 按策略不嵌的任务清出队列：{swept} 条（不再占 claim 名额）")
     rows = fetch_all(
         """
         UPDATE embed_tasks SET state='claimed', claimed_at=now()
