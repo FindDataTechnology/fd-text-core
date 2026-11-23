@@ -156,9 +156,13 @@ def rows_to_docs(rows: list[dict]) -> tuple[list[Doc], list[str]]:
         md["has_body"] = "true" if content else "false"
 
         title = md["raw_title"] or None
+        # domain 取自 spool 行（fd-info 的 body_store 按条目 domain 写），缺省 news。
+        # 根本修：loader 不再写死单一域，同一条 spool 管线可服务多垂域
+        # （govcn→gov、cninfo/news-rss→news）。见 fd-info models.InfoItem.domain。
+        row_domain = str(row.get("domain") or DOMAIN).strip() or DOMAIN
         docs.append(
             Doc(
-                domain=DOMAIN,
+                domain=row_domain,
                 source=source,
                 source_id=source_id,
                 title=title,
