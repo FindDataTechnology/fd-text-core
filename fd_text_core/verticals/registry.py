@@ -28,6 +28,19 @@ class Vertical:
     #: **静默返回空集**（实测 2026-11-13：0 篇 vs 实际 4 篇 cs.CL）。空集被读成
     #: "没有这类论文"比报错还坏。映射写在垂域配置里，引擎不写死任何垂域特例。
     facet_paths: dict[str, tuple[str, str]] = field(default_factory=dict)
+    #: facet 投影：给定一行原始记录的**记录视图**，算出各 facet 的归一取值。
+    #:
+    #: 这是「一个域的全部 facet 规则住一个地方」的落点。加载器、回填脚本、质量门
+    #: 一律 ``get_facet_projector(domain)(record)``，**不认识任何域名**；新增来源
+    #: 不需要加载器改一行。``None`` 表示该域不投影 facet（合法），调用方据此跳过。
+    #:
+    #: ``record`` 的键契约为（缺任意键按 None 处理，由投影自己决定怎么读）：
+    #:   ``title`` ``content`` ``published`` ``metadata``（既有 metadata，供幂等投影
+    #:   保留已抽取项） ``source`` ``source_type`` ``cold_block_key`` ``domain``。
+    #:   ``content`` 为 None/空表示该行正文在冷存（见 ``cold_block_key``）：投影此时
+    #:   算不出依赖正文的 facet（如 sections），应如实留空而非拿空正文瞎算。
+    #: 返回 ``{facet 名: 取值}``，键应当落在 ``facets`` 词表内（词表外取值由投影归一）。
+    facet_projector: Callable[[dict], dict] | None = None
     language: str = "multi"
     display: str = ""
 
@@ -58,6 +71,15 @@ def get(name: str) -> Vertical:
 
 def get_strategy(name: str) -> Callable:
     return get(name).strategy
+
+
+def get_facet_projector(name: str) -> Callable[[dict], dict] | None:
+    """取某垂域的 facet 投影；未注册域抛 KeyError，未提供投影返回 None。
+
+    返回 None 是**合法结果**（该域不投影 facet），调用方不得把它当错误——但也不能
+    静默忽略：质量门的「facet 覆盖」核对会盯住「声明了词表却实存 0 种取值」的域。
+    """
+    return get(name).facet_projector
 
 
 def list_verticals() -> list[str]:

@@ -1,0 +1,75 @@
+"""公文 facet 投影的测试（change: unify-facet-projection-at-source task 2.1/2.2）。"""
+from __future__ import annotations
+
+from fd_text_core.verticals.gov import FACETS
+from fd_text_core.verticals.gov.facets import project_facets
+from fd_text_core.verticals.gov.parser import _issuer_from_signature
+
+
+def test_signature_extracts_agency_glued_to_date():
+    assert _issuer_from_signature("市场监管总局2024年6月20日\n（此件公开发布）") == "市场监管总局"
+
+
+def test_signature_extracts_agency_on_own_line():
+    body = "特此公告。\n交通运输部\n2020年7月15日"
+    assert _issuer_from_signature(body) == "交通运输部"
+
+
+def test_signature_rejects_attachment_and_contact_lines():
+    body = "附件：xxx.doc\n（联系人：张三，联系电话：010-1）"
+    assert _issuer_from_signature(body) is None
+
+
+def test_signature_does_not_mistake_citation_for_issuer():
+    # 正文尾部只出现「引用他机关的文号」，不得判成发文机关
+    body = "根据《财政部关于印发办法的通知》（财预〔2020〕1号）执行。"
+    assert _issuer_from_signature(body) is None
+
+
+def test_project_prefers_signature_over_title():
+    rec = {
+        "title": "中共中央 国务院 关于完善产权保护制度的意见",
+        "content": "……\n市场监管总局2024年6月20日\n（此件公开发布）",
+        "published": "2024-06-20T00:00:00Z",
+    }
+    out = project_facets(rec)
+    assert out["issuer"] == "市场监管总局"
+    assert out["period"] == "2024"
+
+
+def test_project_doc_type_from_title_endword():
+    rec = {"title": "关于修改《中华人民共和国道路运输条例》的决定",
+           "content": "", "published": "2020-01-01"}
+    assert project_facets(rec)["doc_type"] == "决定"
+
+
+def test_project_out_of_vocab_issuer_becomes_other_keeping_raw():
+    rec = {"title": "某通知", "content": "某某企业集团\n2020年1月1日", "published": "2020-01-01"}
+    out = project_facets(rec)
+    assert out["issuer"] == "其他"
+    assert out["issuer_raw"] == "某某企业集团"
+
+
+def test_project_respects_existing_metadata():
+    rec = {
+        "title": "x",
+        "content": "",
+        "published": "2019-05-01",
+        "metadata": {"issuer_raw": "财政部办公厅", "doc_type": "通知", "sections": [["一", "正文"]]},
+    }
+    out = project_facets(rec)
+    assert out["issuer"] == "财政部"
+    assert out["doc_type"] == "通知"
+    assert out["sections"] == [["一", "正文"]]
+
+
+def test_project_is_deterministic():
+    rec = {"title": "财政部关于印发办法的通知", "content": "财政部\n2021年1月1日",
+           "published": "2021-01-01"}
+    assert project_facets(rec) == project_facets(rec)
+
+
+def test_project_output_keys_subset_of_vocab_plus_sections():
+    rec = {"title": "公告", "content": "", "published": "2022-02-02"}
+    out = project_facets(rec)
+    assert set(out) <= set(FACETS) | {"sections", "issuer_raw"}

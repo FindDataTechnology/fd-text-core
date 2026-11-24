@@ -115,13 +115,9 @@ def test_iter_spool_fair_share_does_not_starve_small_sources(tmp_path):
 
 def test_govcn_source_type_is_policy_not_announcement():
     """回归：govcn 政策曾落 announcement 基类 → 撞 EMBED_SKIP_SOURCE_TYPES=announcement
-    被跳过不嵌（2026-11-23 实测 14831 篇全未嵌）。govcn 必备映射为 policy（要嵌）。"""
-    import importlib.util
-    from pathlib import Path
+    被跳过不嵌（2026-11-23 实测 14831 篇全未嵌）。govcn 必备映射为 policy（要嵌）。
+    映射现住 news 垂域投影（change: unify-facet-projection-at-source）。"""
+    from fd_text_core.verticals.news.facets import project_facets
 
-    spec = importlib.util.spec_from_file_location(
-        "load_news_spool", Path(__file__).resolve().parents[1] / "scripts" / "load_news_spool.py")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    assert mod._facet_source_type("govcn") == "policy"
-    assert mod._facet_source_type("cninfo") == "announcement"
+    assert project_facets({"source": "govcn", "content": "x"})["source_type"] == "policy"
+    assert project_facets({"source": "cninfo", "content": "x"})["source_type"] == "announcement"

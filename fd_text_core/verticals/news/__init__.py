@@ -8,6 +8,7 @@ from __future__ import annotations
 from ...chunking import SlidingWindow
 from ...presets import Preset
 from ..registry import Vertical, bootstrap_defaults, replace
+from .facets import project_facets
 
 FACETS = {
     "source_type": frozenset({"announcement", "ministry", "interaction", "news"}),
@@ -55,6 +56,7 @@ replace(
         name="news",
         strategy=SlidingWindow(target=800, max_size=1500),
         facets=FACETS,
+        facet_projector=project_facets,
         parser=NewsParser(),
         cjk=True,
         presets=PRESETS,

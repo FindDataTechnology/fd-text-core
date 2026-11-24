@@ -361,6 +361,49 @@ def _issuer_from_title(title: str | None) -> str | None:
     return m.group(1) if m else None
 
 
+# 落款日期：与机关名同行或以独立行出现的成文日期，剥掉后剩下的才是机关名。
+_RE_TAIL_DATE = re.compile(
+    "(?:\\d{4}\\s*年\\s*\\d{1,2}\\s*月\\s*\\d{1,2}\\s*日|\\d{4}-\\d{2}-\\d{2}"
+    "|\\d{4}\\s*年\\s*\\d{1,2}\\s*月|\\d{4}\\.\\d{1,2}\\.\\d{1,2})\\s*$"
+)
+# 像机关名的行：以机关后缀收尾，长度有界。
+_RE_AGENCY_LIKE = re.compile(
+    "^(?:中华人民共和国)?[\\u4e00-\\u9fff]{2,22}?"
+    "(?:部|委(?:员会)?|总局|总署|署|局|厅|政府|院|会|社|集团|公司)$"
+)
+# 落款里不该当机关的常见非机关行（人名头衔、附件清单、联系方式、公开标注）。
+_RE_NOT_AGENCY = re.compile(
+    "(?:总理|委员长|主席|部长|局长|主任|省长|市长|县长|联系人|联系电话|电话|邮箱|地址|邮编"
+    "|附件|此件|公开发布|抄送|主题词|负责人)"
+)
+
+
+def _issuer_from_signature(body: str | None, tail_lines: int = 8) -> str | None:
+    """从正文**落款**取发文机关（文末机关署名）。
+
+    为什么需要它（实测 2026-11-24）：gov.cn 政策标题 96% 是「中共中央 国务院 关于…」
+    型，不含发文机关名，仅靠标题只能抽到 4%；而**正文落款**（文末署名，如「市场监管
+    总局2024年6月20日」独立成行）含词表机关名的占 40.6%。
+
+    判据必须**保守**（宁可判空，不可把引用他机关误判成发文机关）：只扫尾部 tail_lines
+    个非空行、要求整行（剥掉落款日期后）基本就是机关名（有机关后缀、长度有界）、
+    排除人名头衔/附件/联系方式等非机关行。命中即返回**归一前**的机关名，归一与词表
+    落地由投影负责。
+    """
+    if not body:
+        return None
+    lines = [ln.strip() for ln in body.split("\n") if ln.strip()]
+    for ln in reversed(lines[-tail_lines:] if tail_lines else lines):
+        if _RE_NOT_AGENCY.search(ln):
+            continue
+        cand = _RE_TAIL_DATE.sub("", ln).strip()
+        if not cand or len(cand) > 24:
+            continue
+        if _RE_AGENCY_LIKE.match(cand):
+            return cand
+    return None
+
+
 def _detect_doc_type(title: str | None) -> str | None:
     """文种判定：编号形态（令/公告）-> 标题结尾词 -> 标题内「的X」-> None。
 

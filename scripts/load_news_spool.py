@@ -29,6 +29,7 @@ from fd_text_core import db as dbmod
 from fd_text_core import embed_worker
 from fd_text_core.ingest import Doc, load_documents
 from fd_text_core.provenance import Provenance
+from fd_text_core.verticals.registry import get_facet_projector
 
 DOMAIN = "news"
 
@@ -144,22 +145,35 @@ def rows_to_docs(rows: list[dict]) -> tuple[list[Doc], list[str]]:
         md["entities"] = entities if isinstance(entities, list) else []
         md["raw_title"] = str(row.get("title") or "")
 
-        # facet 投影（news 词表：source_type/lang/has_body）——facet 字段必须
-        # 显式落库，否则按 facet 过滤恒 0 命中（load_gov 同款教训）。
-        # 2026-11-13 实测：词表三件里只写了 source_type/lang，has_body 从未落库，
-        # 于是任何 has_body 过滤恒 0（生产 5908 篇全无该键）。
-        md["source_type"] = _facet_source_type(source)
-        # 恒为 true 是**构造保证**而不是巧合成：缺正文的行在上面就被 skip 了，
-        # 库里另有 ck_document_has_body 约束（content 或冷存指针非空）。
-        # 保留这个字段是因为分析面据此决定能否做逐字引用；将来若接入只有摘要的源，
-        # 这里就是记 false 的位置（届时须放宽上面的 skip 规则）。
-        md["has_body"] = "true" if content else "false"
-
         title = md["raw_title"] or None
         # domain 取自 spool 行（fd-info 的 body_store 按条目 domain 写），缺省 news。
         # 根本修：loader 不再写死单一域，同一条 spool 管线可服务多垂域
         # （govcn→gov、cninfo/news-rss→news）。见 fd-info models.InfoItem.domain。
         row_domain = str(row.get("domain") or DOMAIN).strip() or DOMAIN
+
+        # facet 投影：由**所属垂域自己**算（change: unify-facet-projection-at-source）。
+        # 加载器不认识任何域规则——公文词表/机关归一/文种判定住 verticals.gov，
+        # source_type 兜底映射住 verticals.news。facet 字段必须显式落库，否则按
+        # facet 过滤恒 0 命中（实测 2026-11-13：has_body 从没落库，过滤恒 0）。
+        facet_project = get_facet_projector(row_domain)
+        if facet_project is not None:
+            md.update(
+                facet_project(
+                    {
+                        **row,
+                        "domain": row_domain,
+                        "content": content,
+                        "title": title or "",
+                        # 记录视图的键契约用 published（见 registry.Vertical），
+                        # spool 行的字段名是 published_at —— 形状适配属加载器本分。
+                        "published": row.get("published_at"),
+                        # spool 行正文尚在 content（未冷存），cold_block_key 恒 None；
+                        # 显式带上以对齐记录视图契约。
+                        "cold_block_key": None,
+                    }
+                )
+            )
+
         docs.append(
             Doc(
                 domain=row_domain,
@@ -206,23 +220,6 @@ def _strip_html_to_text(source: str, content: str) -> str:
     if body.count("<") > 20:
         return ""
     return body
-
-
-def _facet_source_type(source: str) -> str:
-    """source 名 → source_type facet（词表外归 announcement 基类）。
-
-    注意：govcn 政策文件是 gov 域的**正文语料**，必须嵌向量（语义检索要用），
-    不能落 announcement 基类——否则撞 EMBED_SKIP_SOURCE_TYPES=announcement 被跳过
-    不嵌（2026-11-23 实测：14831 篇 govcn 全被当 announcement 跳过）。
-    """
-    mapping = {
-        "cninfo": "announcement",
-        "cn-gov": "ministry",
-        "sse-interaction": "interaction",
-        "news-rss": "news",
-        "govcn": "policy",
-    }
-    return mapping.get(source, "announcement")
 
 
 def main() -> int:

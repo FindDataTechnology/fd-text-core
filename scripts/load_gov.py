@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 import argparse
-import re
 import sys
 from pathlib import Path
 
@@ -28,50 +27,12 @@ from fd_text_core import embed_worker
 from fd_text_core.coldstore import _s3
 from fd_text_core.ingest import Doc, iter_structured, load_documents
 from fd_text_core.provenance import Provenance
+from fd_text_core.verticals.registry import get_facet_projector
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from load_papers import build_embedder
 
 DOMAIN = "gov"
-
-
-def _facet_issuer(raw) -> str | None:
-    """把机关名对到 facet 词表；词表外归「其他」。
-
-    为什么归「其他」而不是原值：facet 校验是 fail-closed（词表外取值直接报错），
-    留着词表外的值会让按机关过滤整体不可用。归「其他」保留了「这条有机关信息、
-    只是不在词表内」的事实，且原值仍在 metadata.issuer_raw 可追溯。
-    """
-    from fd_text_core.verticals.gov import FACETS
-
-    if not raw:
-        return None
-    s = str(raw).strip()
-    if s in FACETS["issuer"]:
-        return s
-    return "其他"
-
-
-def _facet_doc_type(raw) -> str | None:
-    from fd_text_core.verticals.gov import FACETS
-
-    if not raw:
-        return None
-    s = str(raw).strip()
-    return s if s in FACETS["doc_type"] else None
-
-
-def _facet_period(raw) -> str | None:
-    """年份 facet：取成文日期（落款优先）的年份，落回发布年份。
-
-    为何用 doc_date 优先：公文的「时期」是其成文时间，发布页日期可能晚数月
-    （实测有 2026 年发布、成文 2024 年的令）。词表外的年份如实返回该年份——
-    词表是随语料扩充的，返回真实值比截断成词表内的值更诚实。
-    """
-    if not raw:
-        return None
-    m = re.match(r"(\d{4})", str(raw))
-    return m.group(1) if m else None
 
 
 def _index_header(md: dict, row: dict) -> str:
@@ -119,13 +80,12 @@ def rows_to_docs(rows) -> tuple[list[Doc], list[str]]:
         md["published"] = row.get("published")
         md["doc_date"] = row.get("doc_date")
 
-        # facet 投影：检索按 metadata->>'<facet>' 过滤，故 facet 字段必须**显式落库**。
-        # 不做这步的表现是「facet 过滤恒 0 命中」——采集侧 metadata 里已有 issuer/doc_type，
-        # 但 period 谁都没算，而词表里列了它（实测按机关过滤也 0 命中：字段名对但
-        # 值域未归一，已在 parser 侧修）。此处统一补齐三个 facet 的**归一后**取值。
-        md["issuer"] = _facet_issuer(md.get("issuer"))
-        md["doc_type"] = _facet_doc_type(md.get("doc_type"))
-        md["period"] = _facet_period(md.get("doc_date") or md.get("published"))
+        # facet 投影：检索按 metadata->>'<facet>' 过滤，故 facet 字段必须**显式落库**，
+        # 否则按它过滤恒 0 命中。归一规则（机关词表外→「其他」、文种词表外→None、
+        # 落款抽 issuer）全部住垂域（verticals/gov/facets.py），加载器只调不改。
+        facet_project = get_facet_projector(DOMAIN)
+        if facet_project is not None:
+            md.update(facet_project({**row, "domain": DOMAIN, "metadata": md}))
 
         # 检索头：把文号/机关/成文日期拼进正文首行。
         #

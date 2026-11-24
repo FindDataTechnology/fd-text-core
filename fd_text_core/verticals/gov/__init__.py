@@ -14,42 +14,7 @@ from dataclasses import dataclass, field
 from ...chunking import SlidingWindow
 from ...presets import Preset
 from ..registry import Vertical, bootstrap_defaults, replace
-
-FACETS = {
-    # 发文机关：**按实测语料分布定**（2026-10-13，209 篇）。词表只收「本部委级」机关名——
-    # 解析器已把「财政部办公厅」「财政部会计司」这类内部机构归一到主体机关
-    # （见 parser._normalize_issuer），故这里不需要列司/处级取值。
-    # 「其他」承接实测出现的联合发文与非部委主体（部委联合发文/企业/法院等），
-    # 它们是真实数据的一部分，如实归入而不臆造机关名。
-    "issuer": frozenset(
-        {
-            "自然资源部",
-            "财政部",
-            "国家发展改革委",
-            "生态环境部",
-            "交通运输部",
-            "水利部",
-            "国家能源局",
-            "国家数据局",
-            "国家税务总局",
-            "中国人民银行",
-            "市场监管总局",
-            "最高人民法院",
-            "最高人民检察院",
-            "国家核安全局",
-            "国家外汇管理局",
-            "其他",
-        }
-    ),
-    # 文种：按《党政机关公文处理工作条例》主要类别 + 实测补入的「公示」
-    # （部委公告栏里「XX结果的公示」占相当比例，非法定文种但文类标记稳定）
-    "doc_type": frozenset(
-        {"通知", "公告", "批复", "函", "意见", "决定", "命令", "通报", "报告", "请示", "纪要", "公示",
-         "复函", "条例", "办法", "规定", "细则", "方案", "规划"}
-    ),
-    # 时段：**年份须覆盖语料实际跨度**（实测 2019-2026；词表窄于语料会让过滤静默漏掉旧文档）
-    "period": frozenset({"2019", "2020", "2021", "2022", "2023", "2024", "2025", "2026"}),
-}
+from .facets import FACETS, project_facets
 
 PRESETS = {
     "by_number": Preset(
@@ -202,6 +167,7 @@ replace(
         name="gov",
         strategy=GovSectionStrategy(),
         facets=FACETS,
+        facet_projector=project_facets,
         parser=GovParser(),
         # 中文垂域：引擎原生 CJK 分词（unigram+bigram）+ 繁简归一
         cjk=True,
