@@ -33,7 +33,8 @@ def test_project_prefers_signature_over_title():
         "published": "2024-06-20T00:00:00Z",
     }
     out = project_facets(rec)
-    assert out["issuer"] == "市场监管总局"
+    # 落款「市场监管总局」经别称归一为规范名「国家市场监督管理总局」
+    assert out["issuer"] == "国家市场监督管理总局"
     assert out["period"] == "2024"
 
 
@@ -73,3 +74,38 @@ def test_project_output_keys_subset_of_vocab_plus_sections():
     rec = {"title": "公告", "content": "", "published": "2022-02-02"}
     out = project_facets(rec)
     assert set(out) <= set(FACETS) | {"sections", "issuer_raw"}
+
+
+def test_issuer_strips_prc_prefix():
+    # 中华人民共和国住房和城乡建设部 -> 住房和城乡建设部（13 种前缀写法、130+ 篇）
+    from fd_text_core.verticals.gov.facets import _facet_issuer
+
+    assert _facet_issuer("中华人民共和国住房和城乡建设部") == "住房和城乡建设部"
+    assert _facet_issuer("中华人民共和国商务部") == "商务部"
+
+
+def test_issuer_aliases_merge_same_agency_spellings():
+    from fd_text_core.verticals.gov.facets import _facet_issuer
+
+    assert _facet_issuer("税务总局") == "国家税务总局"
+    assert _facet_issuer("银保监会") == _facet_issuer("中国银行保险监督管理委员会") == "国家金融监督管理总局"
+    assert _facet_issuer("证监会") == _facet_issuer("中国证监会") == "中国证券监督管理委员会"
+    assert _facet_issuer("市场监管总局") == "国家市场监督管理总局"
+    # 归一 bug 历史产物「人力资源社」+ 略写「人力资源社会保障部」都并到规范名
+    assert _facet_issuer("人力资源社") == _facet_issuer("人力资源社会保障部") == "人力资源和社会保障部"
+
+
+def test_issuer_does_not_merge_reorganized_agencies():
+    # 农业部/卫生部 是改组前的真实发文机关，不与现名合并（如实保留，不改写历史）
+    from fd_text_core.verticals.gov.facets import _facet_issuer
+
+    assert _facet_issuer("农业部") == "农业部"
+    assert _facet_issuer("卫生部") == "卫生部"
+
+
+def test_joint_issuance_goes_to_other():
+    # 多机关连写不臆造单机关，归「其他」
+    from fd_text_core.verticals.gov.facets import _facet_issuer
+
+    assert _facet_issuer("工业和信息化部国家发展改革委") == "其他"
+    assert _facet_issuer("财政部办公厅住房城乡建设部") == "其他"
