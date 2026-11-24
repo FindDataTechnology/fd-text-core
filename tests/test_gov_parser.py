@@ -416,3 +416,29 @@ def test_doc_number_kept_when_title_agrees():
 
     doc = parse_gov_doc(html)
     assert doc.doc_number == "财办债〔2026〕218号", doc.doc_number
+
+
+def test_doc_types_source_of_truth_matches_facet_vocab():
+    """parser._DOC_TYPES 与垂域 FACETS['doc_type'] 必须同源（防漂移）。
+
+    两处不同会导致「parser 判出但 facet 校验拒」或「词表有但 parser 判不出」——
+    facet 过滤静默漏掉该类文档。政策库高频文种（条例/办法/规定等）尤其如此。
+    """
+    from fd_text_core.verticals.gov.parser import _DOC_TYPES
+    from fd_text_core.verticals.gov import FACETS
+    assert set(_DOC_TYPES) == set(FACETS["doc_type"])
+
+
+def test_detect_policy_doc_types():
+    """政策库高频文种（条例/办法/规定/细则/方案/规划）标题可判出（结尾词优先）。"""
+    from fd_text_core.verticals.gov.parser import _detect_doc_type
+    cases = {
+        "XX省物业管理条例": "条例",
+        "XX市城市绿化办法": "办法",
+        "XX关于XX工作的规定": "规定",
+        "XX实施细则": "细则",
+        "XX行动方案": "方案",
+        "XX十五五规划": "规划",
+    }
+    for title, expected in cases.items():
+        assert _detect_doc_type(title) == expected, title
