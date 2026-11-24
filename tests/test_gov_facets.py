@@ -109,3 +109,27 @@ def test_joint_issuance_goes_to_other():
 
     assert _facet_issuer("工业和信息化部国家发展改革委") == "其他"
     assert _facet_issuer("财政部办公厅住房城乡建设部") == "其他"
+
+
+def test_central_agencies_present_in_vocab():
+    """国务院直属机构/国家局必须在词表内——防「重写词表时误漏」（2026-11-24 实撞：
+    国家外汇管理局 43 篇曾因重写词表漏收而落「其他」）。"""
+    from fd_text_core.verticals.gov.facets import FACETS, _facet_issuer
+
+    must = [
+        "国家外汇管理局", "国家核安全局", "国家密码管理局", "国家版权局",
+        "国家电影局", "国家新闻出版署", "国家公务员局", "国家数据局",
+        "国家宗教事务局", "国家自然科学基金委员会", "中国地震局", "中央网信办",
+        "出入境管理局",
+    ]
+    for name in must:
+        assert name in FACETS["issuer"], f"{name} 应在 issuer 词表内"
+        assert _facet_issuer(name) == name
+
+
+def test_agency_aliases_resolve_to_vocab_entry():
+    """每个别名目标都必须在词表内，否则别名等于无用（帮到一个仍落「其他」的名字）。"""
+    from fd_text_core.verticals.gov.facets import FACETS, ISSUER_ALIASES
+
+    for src, dst in ISSUER_ALIASES.items():
+        assert dst in FACETS["issuer"], f"别名 {src}->{dst} 的目标不在词表内"
